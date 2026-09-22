@@ -13,13 +13,18 @@
  */
 typedef enum
 {
-    RCC_OK = 0,                         /**< Operação executada com sucesso. */
-    RCC_ERR_INVALID_CLOCK_SOURCE = -1, /**< Fonte de clock inválida. */
-    RCC_ERR_INVALID_APB_NUM = -2,      /**< Número do barramento APB inválido. */
-    RCC_ERR_INVALID_APB_DIVIDER = -3,  /**< Divisor do barramento APB inválido. */
-    RCC_ERR_CLOCK_NOT_RDY = -4,        /**< Fonte de clock não está pronta. */
-    RCC_ERR_SET_CLOCK_SOURCE_FAILED = -5 /**< Falha ao selecionar a fonte de clock. */
+    RCC_OK = 0,                            /**< Operação executada com sucesso. */
+    RCC_ERR_INVALID_CLOCK_SOURCE = -1,    /**< Fonte de clock inválida. */
+    RCC_ERR_INVALID_APB_NUM = -2,         /**< Número do barramento APB inválido. */
+    RCC_ERR_INVALID_APB_DIVIDER = -3,     /**< Divisor do barramento APB inválido. */
+    RCC_ERR_CLOCK_NOT_RDY = -4,           /**< Fonte de clock não está pronta. */
+    RCC_ERR_SET_CLOCK_SOURCE_FAILED = -5, /**< Falha ao selecionar a fonte de clock. */
+
+    RCC_ERR_INVALID_PLL_P_FACTOR = -6, /**< Fator de divisão P do PLL inválido. */
+    RCC_ERR_INVALID_PLL_M_FACTOR = -7, /**< Fator de divisão M do PLL inválido. */
+    RCC_ERR_INVALID_PLL_N_FACTOR = -8  /**< Fator de divisão N do PLL inválido. */
 } rcc_err_t;
+
 
 /**
  * @brief Fontes de clock disponíveis para o sistema.
@@ -33,6 +38,21 @@ typedef enum
     RCC_HSE = 1, /**< HSE (High-Speed External). */
     RCC_PLL = 2  /**< PLL (Phase-Locked Loop). */
 } rcc_clock_source_t;
+
+
+/**
+ * @brief Fatores de divisão P válidos para o PLL.
+ *
+ * Define os fatores de divisão disponíveis para a saída principal
+ * do PLL do STM32F411.
+ */
+typedef enum
+{
+    RCC_PLL_P_DIV_2 = 2, /**< Divisão da saída do PLL por 2. */
+    RCC_PLL_P_DIV_4 = 4, /**< Divisão da saída do PLL por 4. */
+    RCC_PLL_P_DIV_6 = 6, /**< Divisão da saída do PLL por 6. */
+    RCC_PLL_P_DIV_8 = 8  /**< Divisão da saída do PLL por 8. */
+} rcc_pll_p_factor_t;
 
 /**
  * @brief Divisores disponíveis para os barramentos APB.
@@ -51,6 +71,7 @@ typedef enum
     RCC_APBx_DIV_8  = 6, /**< Divisão por 8. */
     RCC_APBx_DIV_16 = 7  /**< Divisão por 16. */
 } rcc_apb_divider_t;
+
 
 /**
  * @brief Divisores disponíveis para o barramento AHB.
@@ -74,6 +95,7 @@ typedef enum
     RCC_AHB_DIV_512 = 15  /**< Divisão por 512. */
 } rcc_ahb_divider_t;
 
+
 /**
  * @brief Estrutura contendo o estado atual da configuração de clock.
  *
@@ -88,179 +110,251 @@ typedef struct
     rcc_apb_divider_t apb2_divider;  /**< Divisor configurado para o APB2. */
 } rcc_clock_status_t;
 
+
+/**
+ * @brief Parâmetros de configuração do PLL.
+ *
+ * Define a fonte de entrada e os fatores de divisão e multiplicação
+ * utilizados pelo PLL para gerar o clock de saída.
+ *
+ * A frequência de saída do PLL é determinada por:
+ *
+ * @f[
+ * f_{PLL} = \frac{f_{source}}{M} \times \frac{N}{P}
+ * @f]
+ *
+ * onde:
+ * - @c source é a fonte de entrada do PLL;
+ * - @c M é o fator de divisão da entrada do PLL;
+ * - @c N é o fator de multiplicação do VCO;
+ * - @c P é o fator de divisão da saída do PLL.
+ */
+typedef struct
+{
+    rcc_clock_source_t source; /**< Fonte de entrada do PLL. */
+    uint32_t m_factor;         /**< Fator de divisão M. */
+    uint32_t n_factor;         /**< Fator de multiplicação N. */
+    rcc_pll_p_factor_t p_factor; /**< Fator de divisão P. */
+} rcc_pll_config_t;
+
+
 /**
  * @brief Estrutura de configuração do sistema de clock.
  *
  * Contém os parâmetros utilizados para configurar a fonte de clock
- * e os divisores dos barramentos AHB, APB1 e APB2.
+ * do sistema, o PLL e os divisores dos barramentos AHB, APB1 e APB2.
+ *
+ * Quando o campo @c clock_source é configurado como @c RCC_PLL,
+ * os parâmetros presentes em @c pll_conf são utilizados para
+ * configurar o PLL.
  */
 typedef struct
 {
-    rcc_clock_source_t clock_source; /**< Fonte de clock a ser utilizada. */
-    rcc_ahb_divider_t ahb_divider;   /**< Divisor do clock do barramento AHB. */
-    rcc_apb_divider_t apb1_divider;  /**< Divisor do clock do barramento APB1. */
-    rcc_apb_divider_t apb2_divider;  /**< Divisor do clock do barramento APB2. */
-} rcc_confg_t;
+    rcc_clock_source_t clock_source; /**< Fonte de clock do sistema. */
+
+    rcc_pll_config_t pll_conf; /**< Parâmetros de configuração do PLL. */
+
+    rcc_ahb_divider_t ahb_divider;  /**< Divisor do clock do barramento AHB. */
+    rcc_apb_divider_t apb1_divider; /**< Divisor do clock do barramento APB1. */
+    rcc_apb_divider_t apb2_divider; /**< Divisor do clock do barramento APB2. */
+} rcc_config_t;
 
 /**
- * @brief Inicializa e configura o sistema de clock do microcontrolador.
+ * @brief Inicializa e configura o sistema de clock.
  *
- * Configura a fonte de clock do sistema e os divisores dos barramentos
- * AHB, APB1 e APB2 de acordo com os parâmetros fornecidos na estrutura
- * de configuração.
+ * Configura a fonte de clock do sistema, o PLL quando necessário e os
+ * divisores dos barramentos AHB, APB1 e APB2 de acordo com os parâmetros
+ * fornecidos.
  *
- * A configuração é realizada na seguinte ordem:
- * 1. Seleção da fonte de clock do sistema;
- * 2. Configuração do divisor do barramento AHB;
- * 3. Configuração do divisor do barramento APB1;
- * 4. Configuração do divisor do barramento APB2.
+ * Quando os fatores do PLL não estão configurados, a função utiliza
+ * diretamente a fonte de clock especificada em @p config. Quando os
+ * fatores M, N e P do PLL são válidos, a função configura o PLL antes
+ * de selecioná-lo como fonte do clock do sistema.
  *
- * Caso ocorra uma falha em qualquer etapa da configuração, a função
- * interrompe a inicialização e retorna imediatamente o código de erro
- * correspondente.
+ * A função também atualiza a variável global @c SystemCoreClock após
+ * as alterações na configuração do clock.
  *
- * @param[in] config Ponteiro para a estrutura contendo os parâmetros
- *                   de configuração do sistema de clock.
+ * @param[in] config
+ *     Ponteiro para a estrutura contendo os parâmetros de configuração
+ *     do sistema de clock.
  *
- * @return Código de status da operação.
- * @retval RCC_OK Configuração realizada com sucesso.
- * @retval RCC_ERR_SET_CLOCK_SOURCE_FAILED Falha ao configurar a fonte
- *         de clock selecionada.
- * @retval RCC_ERR_INVALID_CLOCK_SOURCE Fonte de clock inválida.
- * @retval RCC_ERR_INVALID_APB_NUM Número do barramento APB inválido.
- * @retval RCC_ERR_INVALID_APB_DIVIDER Divisor de APB inválido.
+ * @return Código indicando o resultado da operação.
  *
- * @warning O ponteiro @p config deve apontar para uma estrutura
- *          previamente inicializada com parâmetros válidos.
+ * @retval RCC_OK
+ *     Configuração realizada com sucesso.
+ *
+ * @retval RCC_ERR_INVALID_CLOCK_SOURCE
+ *     Fonte de clock inválida para a configuração solicitada.
+ *
+ * @retval RCC_ERR_INVALID_APB_NUM
+ *     Número do barramento APB inválido.
+ *
+ * @retval RCC_ERR_INVALID_APB_DIVIDER
+ *     Divisor de APB inválido.
+ *
+ * @retval RCC_ERR_INVALID_PLL_P_FACTOR
+ *     Fator P do PLL inválido.
+ *
+ * @note
+ *     Quando o PLL é utilizado, a implementação considera o HSE como
+ *     fonte de entrada do PLL.
+ *
+ * @warning
+ *     O ponteiro @p config deve apontar para uma estrutura de configuração
+ *     válida.
  */
-rcc_err_t rcc_init(rcc_confg_t *config);
+rcc_err_t rcc_init(rcc_config_t *config);
 
 /**
  * @brief Seleciona a fonte de clock do sistema.
  *
- * Habilita a fonte de clock especificada, aguarda sua estabilização
- * e, caso esteja pronta, seleciona-a como fonte de clock do sistema
- * por meio dos bits SW do registrador RCC_CFGR.
+ * Habilita a fonte de clock especificada, aguarda sua estabilização,
+ * seleciona-a como SYSCLK e aguarda a confirmação da alteração no
+ * registrador RCC_CFGR.
  *
- * As fontes disponíveis são:
- * - HSI: oscilador interno de alta velocidade;
- * - HSE: oscilador externo de alta velocidade;
- * - PLL: Phase-Locked Loop.
+ * @param[in] clock_source
+ *     Fonte de clock a ser selecionada.
  *
- * A função verifica os respectivos bits de ready (HSIRDY, HSERDY
- * ou PLLRDY) antes de selecionar a fonte.
+ * @return Código indicando o resultado da operação.
  *
- * @param[in] clock_source Fonte de clock que será utilizada pelo
- *                         sistema.
+ * @retval RCC_OK
+ *     Fonte de clock selecionada com sucesso.
  *
- * @return Código de status da operação.
- * @retval RCC_OK Fonte de clock configurada com sucesso.
- * @retval RCC_ERR_INVALID_CLOCK_SOURCE Fonte de clock inválida.
- * @retval RCC_ERR_SET_CLOCK_SOURCE_FAILED A fonte selecionada não
- *         atingiu o estado de pronta para operação.
+ * @retval RCC_ERR_INVALID_CLOCK_SOURCE
+ *     Fonte de clock especificada não é válida.
  *
- * @note A função utiliza um atraso baseado em laço de software para
- *       aguardar a estabilização da fonte de clock.
+ * @note
+ *     As fontes disponíveis são HSI, HSE e PLL.
  *
- * @warning Antes de selecionar o PLL, seus parâmetros de multiplicação,
- *          divisão e fonte de entrada devem estar previamente configurados.
+ * @note
+ *     Quando RCC_PLL é selecionado, o PLL deve ter sido previamente
+ *     configurado no registrador RCC_PLLCFGR.
  */
-rcc_err_t rcc_set_clock_source(rcc_clock_source_t clock_source);
+rcc_err_t rcc_set_system_clock_source(rcc_clock_source_t clock_source);
+
 
 /**
- * @brief Configura o divisor de frequência de um barramento APB.
+ * @brief Configura os parâmetros do PLL.
  *
- * Configura o prescaler do barramento APB1 ou APB2 de acordo com o
- * número do barramento especificado e o divisor selecionado.
+ * Configura a fonte de entrada, os fatores de divisão M e P e o fator
+ * de multiplicação N do PLL. O PLL é desabilitado antes da alteração
+ * do registrador RCC_PLLCFGR e habilitado novamente após a configuração.
  *
- * O barramento é selecionado pelo parâmetro @p apb_num:
- * - 1: APB1;
- * - 2: APB2.
+ * A frequência do PLL é determinada por:
  *
- * Os divisores disponíveis são:
- * - DIV_0: divisão por 1;
- * - DIV_2: divisão por 2;
- * - DIV_4: divisão por 4;
- * - DIV_8: divisão por 8;
- * - DIV_16: divisão por 16.
+ * @code
+ * PLL_input  = source / M
+ * VCO        = PLL_input * N
+ * PLL_output = VCO / P
+ * @endcode
  *
- * @param[in] apb_num Número do barramento APB que será configurado.
- *                    Deve ser 1 ou 2.
- * @param[in] divider Divisor de frequência selecionado para o
- *                    barramento APB.
+ * @param[in] pll
+ *     Ponteiro para a estrutura contendo os parâmetros de configuração
+ *     do PLL.
  *
- * @return Código de status da operação.
- * @retval RCC_OK Divisor configurado com sucesso.
- * @retval RCC_ERR_INVALID_APB_NUM Número do barramento APB inválido.
- * @retval RCC_ERR_INVALID_APB_DIVIDER Divisor de APB inválido.
+ * @return Código indicando o resultado da operação.
  *
- * @note A configuração é realizada diretamente no registrador RCC_CFGR,
- *       utilizando os campos PPRE1 para APB1 e PPRE2 para APB2.
+ * @retval RCC_OK
+ *     PLL configurado e estabilizado com sucesso.
  *
- * @warning O divisor selecionado deve respeitar os limites máximos
- *          de frequência dos periféricos conectados ao respectivo
- *          barramento APB.
+ * @retval RCC_ERR_INVALID_CLOCK_SOURCE
+ *     Fonte de clock especificada para o PLL é inválida.
+ *
+ * @retval RCC_ERR_INVALID_PLL_P_FACTOR
+ *     Fator de divisão P inválido. São permitidos os valores 2, 4, 6 e 8.
+ *
+ * @note
+ *     O fator P é convertido para o campo PLLP do registrador
+ *     RCC_PLLCFGR conforme a codificação definida pelo STM32F411.
+ *
+ * @note
+ *     O PLL é desabilitado antes da alteração de seus parâmetros.
+ *
+ * @warning
+ *     O ponteiro @p pll deve apontar para uma estrutura de configuração
+ *     válida.
+ */
+rcc_err_t rcc_configure_pll(rcc_pll_config_t *pll);
+
+
+/**
+ * @brief Configura o divisor de um barramento APB.
+ *
+ * Configura o prescaler do barramento APB1 ou APB2 no registrador
+ * RCC_CFGR.
+ *
+ * @param[in] apb_num
+ *     Número do barramento APB a ser configurado.
+ *     O valor 1 seleciona o APB1 e o valor 2 seleciona o APB2.
+ *
+ * @param[in] divider
+ *     Divisor a ser aplicado ao barramento APB selecionado.
+ *
+ * @return Código indicando o resultado da operação.
+ *
+ * @retval RCC_OK
+ *     Divisor configurado com sucesso.
+ *
+ * @retval RCC_ERR_INVALID_APB_NUM
+ *     O número do barramento APB não corresponde a APB1 ou APB2.
+ *
+ * @retval RCC_ERR_INVALID_APB_DIVIDER
+ *     Divisor APB inválido.
+ *
+ * @note
+ *     Os divisores disponíveis são 1, 2, 4, 8 e 16.
  */
 rcc_err_t rcc_set_apbx_divider(int apb_num, rcc_apb_divider_t divider);
 
- /**
- * @brief Configura o divisor de frequência do barramento AHB.
+/**
+ * @brief Configura o divisor do barramento AHB.
  *
- * Configura o prescaler do barramento AHB por meio do campo HPRE do
- * registrador RCC_CFGR.
+ * Configura o prescaler do barramento AHB no campo HPRE do registrador
+ * RCC_CFGR.
  *
- * Os divisores disponíveis são:
- * - DIV_0: divisão por 1;
- * - DIV_2: divisão por 2;
- * - DIV_4: divisão por 4;
- * - DIV_8: divisão por 8;
- * - DIV_16: divisão por 16;
- * - DIV_64: divisão por 64;
- * - DIV_128: divisão por 128;
- * - DIV_256: divisão por 256;
- * - DIV_512: divisão por 512.
+ * @param[in] divider
+ *     Divisor a ser aplicado ao clock do barramento AHB.
  *
- * @param[in] divider Divisor de frequência que será aplicado ao
- *                    barramento AHB.
+ * @return Código indicando o resultado da operação.
  *
- * @return Código de status da operação.
- * @retval RCC_OK Divisor configurado com sucesso.
- * @retval RCC_ERR_INVALID_AHB_DIVIDER Divisor de AHB inválido.
+ * @retval RCC_OK
+ *     Divisor configurado com sucesso.
  *
- * @note O clock do barramento AHB é obtido a partir do clock do sistema
- *       após a aplicação do divisor configurado em HPRE.
+ * @retval RCC_ERR_INVALID_APB_DIVIDER
+ *     O divisor fornecido não corresponde a um valor válido.
+ *
+ * @note
+ *     Os divisores disponíveis são 1, 2, 4, 8, 16, 64, 128, 256 e 512.
+ *
+ * @warning
+ *     O código de erro utilizado atualmente é
+ *     @c RCC_ERR_INVALID_APB_DIVIDER. Recomenda-se criar um código
+ *     específico para divisor AHB, como @c RCC_ERR_INVALID_AHB_DIVIDER.
  */
 rcc_err_t rcc_set_ahb_divider(rcc_ahb_divider_t divider);
 
 /**
- * @brief Obtém o estado atual da configuração do sistema de clock.
+ * @brief Obtém a configuração atual do sistema de clock.
  *
- * Lê o registrador RCC_CFGR e obtém a fonte de clock atualmente
- * selecionada para o sistema, bem como os divisores configurados
- * para os barramentos AHB, APB1 e APB2.
+ * Lê os campos SWS, HPRE, PPRE1 e PPRE2 do registrador RCC_CFGR
+ * e armazena na estrutura fornecida a fonte de clock selecionada
+ * e os divisores configurados para os barramentos AHB, APB1 e APB2.
  *
- * As informações obtidas são armazenadas na estrutura apontada por
- * @p status.
+ * @param[out] status
+ *     Ponteiro para a estrutura que receberá o estado atual da
+ *     configuração do sistema de clock.
  *
- * A fonte de clock é identificada por meio dos bits SWS:
- * - RCC_CFGR_SWS_HSI: HSI;
- * - RCC_CFGR_SWS_HSE: HSE;
- * - RCC_CFGR_SWS_PLL: PLL.
+ * @note
+ *     O campo @c clock_source é determinado a partir do campo SWS
+ *     do registrador RCC_CFGR.
  *
- * Os divisores dos barramentos são obtidos a partir dos campos:
- * - HPRE: divisor do AHB;
- * - PPRE1: divisor do APB1;
- * - PPRE2: divisor do APB2.
+ * @note
+ *     Os campos @c ahb_divider, @c apb1_divider e @c apb2_divider
+ *     recebem diretamente os valores codificados nos respectivos
+ *     campos do registrador RCC_CFGR.
  *
- * @param[out] status Ponteiro para a estrutura que receberá o estado
- *                    atual da configuração do clock.
- *
- * @note Os valores armazenados em @p status correspondem aos campos
- *       brutos dos respectivos registradores, e não necessariamente
- *       ao valor numérico direto do divisor.
- *
- * @warning O ponteiro @p status deve ser válido. Caso seja NULL,
- *          o acesso aos seus membros causará comportamento indefinido.
+ * @warning
+ *     O ponteiro @p status deve apontar para uma estrutura válida.
  */
 void rcc_get_clock_status(rcc_clock_status_t *status);
 

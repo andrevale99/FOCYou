@@ -1,81 +1,367 @@
 #include "rcc.h"
 
-rcc_err_t rcc_init(rcc_confg_t *config)
+/**
+ * @brief Configura o número de estados de espera da memória Flash.
+ *
+ * Define a quantidade de wait states da memória Flash de acordo com
+ * a frequência do clock do sistema. A configuração é necessária para
+ * garantir o acesso adequado à memória Flash quando a frequência do
+ * sistema é elevada.
+ *
+ * @param[in] SystemCoreClock
+ *     Frequência atual do clock do núcleo, em Hz.
+ *
+ * @note
+ *     Para frequências de até 30 MHz, nenhum wait state é utilizado.
+ *
+ * @note
+ *     Para frequências entre 30 MHz e 60 MHz, é configurado 1 wait state.
+ *
+ * @note
+ *     Para frequências entre 60 MHz e 90 MHz, são configurados 2 wait states.
+ *
+ * @note
+ *     Para frequências superiores a 90 MHz, são configurados 3 wait states.
+ *
+ * @warning
+ *     A configuração do número de wait states deve ser realizada antes
+ *     do aumento da frequência do clock do sistema.
+ */
+static void set_wait_state_flash(uint32_t SystemCoreClock)
+{
+    if (SystemCoreClock <= 30000000U)
+    {
+        FLASH->ACR &= ~FLASH_ACR_LATENCY;
+    }
+    else if (SystemCoreClock <= 60000000U)
+    {
+        FLASH->ACR = (FLASH->ACR & ~FLASH_ACR_LATENCY) | FLASH_ACR_LATENCY_1WS;
+    }
+    else if (SystemCoreClock <= 90000000U)
+    {
+        FLASH->ACR = (FLASH->ACR & ~FLASH_ACR_LATENCY) | FLASH_ACR_LATENCY_2WS;
+    }
+    else
+    {
+        FLASH->ACR = (FLASH->ACR & ~FLASH_ACR_LATENCY) | FLASH_ACR_LATENCY_3WS;
+    }
+}
+
+rcc_err_t rcc_init(rcc_config_t *config)
 {
     rcc_err_t err;
 
-    // Set clock source
-    err = rcc_set_clock_source(config->clock_source);
-    if (err != RCC_OK)
-        return err;
+    /*
+     * Configuração sem PLL
+     */
+    if (config->clock_source != RCC_PLL)
+    {
+        err = rcc_set_system_clock_source(config->clock_source);
 
-    // Set AHB divider
+        if (err != RCC_OK)
+            return err;
+    }
+
+    /*
+     * Configuração utilizando PLL
+     */
+    else
+    {
+        uint32_t pll_clock;
+
+        if (config->pll_conf.source == RCC_HSE)
+        {
+            /*
+             * Habilita HSE.
+             */
+            RCC->CR |= RCC_CR_HSEON;
+
+            while (!(RCC->CR & RCC_CR_HSERDY))
+                ;
+        }
+        else
+        {
+            /*
+             * Habilita HSI.
+             */
+            RCC->CR |= RCC_CR_HSION;
+
+            while (!(RCC->CR & RCC_CR_HSIRDY))
+                ;
+        }
+
+        SystemCoreClockUpdate();
+
+        /*
+         * Calcula a frequência que será produzida pelo PLL.
+         *
+         * HSE_VALUE é definido pelo CMSIS, normalmente
+         * em stm32f4xx.h.
+         */
+        pll_clock =
+            ((SystemCoreClock / config->pll_conf.m_factor) *
+             config->pll_conf.n_factor) /
+            config->pll_conf.p_factor;
+
+        /*
+         * Configura Flash antes de aumentar a frequência
+         * do sistema.
+         */
+        set_wait_state_flash(pll_clock);
+
+        /*
+         * Configura PLL.
+         */
+        err = rcc_configure_pll(&config->pll_conf);
+
+        if (err != RCC_OK)
+            return err;
+
+        rcc_set_system_clock_source(config->clock_source);
+    }
+
+    /*
+     * Atualiza SystemCoreClock depois que o SYSCLK
+     * foi efetivamente alterado.
+     */
+    SystemCoreClockUpdate();
+
+    /*
+     * Configura AHB.
+     */
     err = rcc_set_ahb_divider(config->ahb_divider);
+
     if (err != RCC_OK)
         return err;
 
-    // Set APB1 divider
+    /*
+     * Configura APB1.
+     */
     err = rcc_set_apbx_divider(1, config->apb1_divider);
+
     if (err != RCC_OK)
         return err;
 
-    // Set APB2 divider
+    /*
+     * Configura APB2.
+     */
     err = rcc_set_apbx_divider(2, config->apb2_divider);
+
     if (err != RCC_OK)
         return err;
+
+    /*
+     * Atualiza novamente após os prescalers.
+     */
+    SystemCoreClockUpdate();
 
     return RCC_OK;
 }
 
-rcc_err_t rcc_set_clock_source(rcc_clock_source_t clock_source)
+rcc_err_t rcc_set_system_clock_source(rcc_clock_source_t clock_source)
 {
     switch (clock_source)
     {
     case RCC_HSI:
 
-        RCC->CR |= RCC_CR_HSION; // Enable HSI
-        for (volatile int i = 0; i < 100000; i++)
-            ; // Wait for HSI to stabilize
-        if (RCC->CR & RCC_CR_HSIRDY)
-        {
-            RCC->CFGR &= ~RCC_CFGR_SW;    // Clear SW bits
-            RCC->CFGR |= RCC_CFGR_SW_HSI; // Select HSI as system clock
-        }
-        else
-            return RCC_ERR_SET_CLOCK_SOURCE_FAILED; // Error: HSI not ready
+        /*
+         * Habilita HSI.
+         */
+        RCC->CR |= RCC_CR_HSION;
+
+        /*
+         * Aguarda HSI ficar pronto.
+         */
+        while (!(RCC->CR & RCC_CR_HSIRDY))
+            ;
+
+        /*
+         * Seleciona HSI como SYSCLK.
+         */
+        RCC->CFGR &= ~RCC_CFGR_SW;
+        RCC->CFGR |= RCC_CFGR_SW_HSI;
+
+        /*
+         * Aguarda confirmação da troca.
+         */
+        while ((RCC->CFGR & RCC_CFGR_SWS) != RCC_CFGR_SWS_HSI)
+            ;
+
         break;
 
     case RCC_HSE:
 
-        RCC->CR |= RCC_CR_HSEON; // Enable HSE
-        for (volatile int i = 0; i < 100000; i++)
-            ; // Wait for HSE to stabilize
-        if (RCC->CR & RCC_CR_HSERDY)
-        {
-            RCC->CFGR &= ~RCC_CFGR_SW;    // Clear SW bits
-            RCC->CFGR |= RCC_CFGR_SW_HSE; // Select HSE as system clock
-        }
-        else
-            return RCC_ERR_SET_CLOCK_SOURCE_FAILED; // Error: HSE not ready
+        /*
+         * Habilita HSE.
+         */
+        RCC->CR |= RCC_CR_HSEON;
+
+        /*
+         * Aguarda HSE ficar pronto.
+         */
+        while (!(RCC->CR & RCC_CR_HSERDY))
+            ;
+
+        /*
+         * Seleciona HSE como SYSCLK.
+         */
+        RCC->CFGR &= ~RCC_CFGR_SW;
+        RCC->CFGR |= RCC_CFGR_SW_HSE;
+
+        /*
+         * Aguarda confirmação da troca.
+         */
+        while ((RCC->CFGR & RCC_CFGR_SWS) != RCC_CFGR_SWS_HSE)
+            ;
+
         break;
 
     case RCC_PLL:
 
-        RCC->CR |= RCC_CR_PLLON; // Enable PLL
-        for (volatile int i = 0; i < 100000; i++)
-            ; // Wait for PLL to stabilize
-        if (RCC->CR & RCC_CR_PLLRDY)
-        {
-            RCC->CFGR &= ~RCC_CFGR_SW;    // Clear SW bits
-            RCC->CFGR |= RCC_CFGR_SW_PLL; // Select PLL as system clock
-        }
-        else
-            return RCC_ERR_SET_CLOCK_SOURCE_FAILED; // Error: PLL not ready
+        /*
+         * O PLL deve ter sido previamente configurado
+         * em RCC->PLLCFGR.
+         */
+
+        /*
+         * Habilita PLL.
+         */
+        RCC->CR |= RCC_CR_PLLON;
+
+        /*
+         * Aguarda PLL ficar pronto.
+         */
+        while (!(RCC->CR & RCC_CR_PLLRDY))
+            ;
+
+        /*
+         * Seleciona PLL como SYSCLK.
+         */
+        RCC->CFGR &= ~RCC_CFGR_SW;
+        RCC->CFGR |= RCC_CFGR_SW_PLL;
+
+        /*
+         * Aguarda confirmação da troca.
+         */
+        while ((RCC->CFGR & RCC_CFGR_SWS) != RCC_CFGR_SWS_PLL)
+            ;
+
         break;
 
     default:
-        return RCC_ERR_INVALID_CLOCK_SOURCE; // Error
+
+        return RCC_ERR_INVALID_CLOCK_SOURCE;
     }
+
+    return RCC_OK;
+}
+
+rcc_err_t rcc_configure_pll(rcc_pll_config_t *pll)
+{
+    uint32_t pll_p;
+    uint32_t pll_source;
+
+    /*
+     * Seleciona a fonte do PLL.
+     *
+     * PLLSRC = 0 -> HSI
+     * PLLSRC = 1 -> HSE
+     */
+    switch (pll->source)
+    {
+    case RCC_HSI:
+        pll_source = 0U;
+        break;
+
+    case RCC_HSE:
+        pll_source = RCC_PLLCFGR_PLLSRC;
+        break;
+
+    default:
+        return RCC_ERR_INVALID_CLOCK_SOURCE;
+    }
+
+    /*
+     * Verifica o fator M.
+     *
+     * No STM32F411, PLLM deve estar entre 2 e 63.
+     */
+    if ((pll->m_factor < 2U) || (pll->m_factor > 63U))
+    {
+        return RCC_ERR_INVALID_PLL_M_FACTOR;
+    }
+
+    /*
+     * Verifica o fator N.
+     *
+     * No STM32F411, PLLN deve estar entre 50 e 432.
+     */
+    if ((pll->n_factor < 50U) || (pll->n_factor > 432U))
+    {
+        return RCC_ERR_INVALID_PLL_N_FACTOR;
+    }
+
+    /*
+     * PLLP aceita somente os valores:
+     *
+     * 2 -> 00
+     * 4 -> 01
+     * 6 -> 10
+     * 8 -> 11
+     */
+    switch (pll->p_factor)
+    {
+    case RCC_PLL_P_DIV_2:
+        pll_p = 0U;
+        break;
+
+    case RCC_PLL_P_DIV_4:
+        pll_p = 1U;
+        break;
+
+    case RCC_PLL_P_DIV_6:
+        pll_p = 2U;
+        break;
+
+    case RCC_PLL_P_DIV_8:
+        pll_p = 3U;
+        break;
+
+    default:
+        return RCC_ERR_INVALID_PLL_P_FACTOR;
+    }
+
+    /*
+     * Desabilita o PLL antes de alterar PLLCFGR.
+     */
+    RCC->CR &= ~RCC_CR_PLLON;
+
+    /*
+     * Aguarda o PLL ser desabilitado.
+     */
+    while (RCC->CR & RCC_CR_PLLRDY)
+        ;
+
+    /*
+     * Configuração do PLL:
+     *
+     * PLL input  = source / M
+     * VCO        = PLL input * N
+     * PLL output = VCO / P
+     */
+    RCC->PLLCFGR =
+        (pll->m_factor << RCC_PLLCFGR_PLLM_Pos) | (pll->n_factor << RCC_PLLCFGR_PLLN_Pos) | (pll_p << RCC_PLLCFGR_PLLP_Pos) | pll_source;
+
+    /*
+     * Habilita PLL.
+     */
+    RCC->CR |= RCC_CR_PLLON;
+
+    /*
+     * Aguarda o PLL estabilizar.
+     */
+    while (!(RCC->CR & RCC_CR_PLLRDY))
+        ;
 
     return RCC_OK;
 }
