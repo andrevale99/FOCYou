@@ -22,9 +22,7 @@ void init_delya_timer11(void)
     DELAY_TIMER->CR1 |= TIM_CR1_CEN;
 }
 
-// @brief Caso nao tenha modificado nada, cada valor
-// do contador correponde a 40e-8 s (40 ns)
-void delay_lcd(uint32_t ticks)
+void delay_ns(uint32_t ticks)
 {
     uint16_t start = DELAY_TIMER->CNT;
 
