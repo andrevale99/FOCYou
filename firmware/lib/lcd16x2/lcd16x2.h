@@ -61,7 +61,7 @@ typedef struct
     lcd16x2_pin_t rs;
 
     void (*delay_ns)(uint32_t);
-} lcd16x2_handle;
+} lcd16x2_handle_t;
 
 /**
  * @brief Inicializa o display LCD 16x2 no modo de comunicação de 4 bits.
@@ -80,7 +80,7 @@ typedef struct
  *
  * @note A função init_func() deve configurar todos os pinos do LCD como saída.
  */
-lcd_err_t lcd16x2_init_4bits(const lcd16x2_handle *handle, void (*init_func)(void));
+lcd_err_t lcd16x2_init_4bits(const lcd16x2_handle_t *handle, void (*init_func)(void));
 
 /**
  * @brief Envia um comando para o display LCD.
@@ -93,7 +93,7 @@ lcd_err_t lcd16x2_init_4bits(const lcd16x2_handle *handle, void (*init_func)(voi
  * @param handle Ponteiro para a estrutura de controle do LCD.
  * @param cmd Comando de 8 bits a ser enviado ao display.
  */
-void lcd16x2_send_cmd(const lcd16x2_handle *, uint8_t );
+void lcd16x2_send_cmd(const lcd16x2_handle_t *, uint8_t );
 
 /**
  * @brief Envia um dado para o display LCD.
@@ -105,7 +105,7 @@ void lcd16x2_send_cmd(const lcd16x2_handle *, uint8_t );
  * @param handle Ponteiro para a estrutura de controle do LCD.
  * @param data Dado de 8 bits a ser enviado ao display.
  */
-void lcd16x2_send_data(const lcd16x2_handle *, uint8_t );
+void lcd16x2_send_data(const lcd16x2_handle_t *, uint8_t );
 
 /**
  * @brief Escreve uma sequência de caracteres no display LCD.
@@ -117,6 +117,6 @@ void lcd16x2_send_data(const lcd16x2_handle *, uint8_t );
  * @param str Ponteiro para a string a ser escrita.
  * @param size Quantidade de caracteres que serão enviados.
  */
-void lcd16x2_write_string(const lcd16x2_handle *, const char *sr, uint8_t );
+void lcd16x2_write_string(const lcd16x2_handle_t *, const char *sr, uint8_t );
 
 #endif

@@ -10,7 +10,7 @@
  *
  * @param handle Ponteiro para a estrutura de controle do LCD.
  */
-static void pulse_enable(const lcd16x2_handle *handle)
+static void pulse_enable(const lcd16x2_handle_t *handle)
 {
     handle->delay_ns(1);
 
@@ -21,7 +21,7 @@ static void pulse_enable(const lcd16x2_handle *handle)
     handle->delay_ns(1);
 }
 
-lcd_err_t lcd16x2_init_4bits(const lcd16x2_handle *handle, void (*init_func)(void))
+lcd_err_t lcd16x2_init_4bits(const lcd16x2_handle_t *handle, void (*init_func)(void))
 {
     if(!init_func)
         return LCD_ERR_INVALID_ARG;
@@ -72,7 +72,7 @@ lcd_err_t lcd16x2_init_4bits(const lcd16x2_handle *handle, void (*init_func)(voi
     return 0;
 }
 
-void lcd16x2_send_cmd(const lcd16x2_handle *handle, uint8_t cmd)
+void lcd16x2_send_cmd(const lcd16x2_handle_t *handle, uint8_t cmd)
 {
     /* RS = 0 para comando */
     handle->rs.write(0);
@@ -94,7 +94,7 @@ void lcd16x2_send_cmd(const lcd16x2_handle *handle, uint8_t cmd)
     handle->delay_ns(1);
 }
 
-void lcd16x2_send_data(const lcd16x2_handle *handle, uint8_t data)
+void lcd16x2_send_data(const lcd16x2_handle_t *handle, uint8_t data)
 {
     /* RS = 1 para dado */
     handle->rs.write(1);
@@ -116,7 +116,7 @@ void lcd16x2_send_data(const lcd16x2_handle *handle, uint8_t data)
     handle->delay_ns(1); // pode reduzir depois
 }
 
-void lcd16x2_write_string(const lcd16x2_handle *handle, const char *str, uint8_t size)
+void lcd16x2_write_string(const lcd16x2_handle_t *handle, const char *str, uint8_t size)
 {
 
     for (uint8_t idx = 0; idx < size; ++idx)
