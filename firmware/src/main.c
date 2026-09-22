@@ -4,7 +4,11 @@
 
 int main(void)
 {
+    /* Habilita acesso à FPU */
+    SCB->CPACR |= (0xFU << 20);
 
+    __DSB();
+    __ISB();
 
     return 0;
 }
