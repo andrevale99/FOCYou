@@ -16,12 +16,6 @@
 #define LCD_BRIDGE_RCC RCC->AHB1ENR
 #define LCD_BRIDGE_RCC_ENABLE RCC_AHB1ENR_GPIOAEN
 
-#define DELAY_TIMER_BRIDGE RCC->APB2ENR
-#define DELAY_TIMER TIM11
-
-// frequencia de 1907.37Hz
-#define DELAY_TIMER_PRESCALE (0) // No stm arr e psc ssao somados com +1
-#define DELAY_TIEMR_ARR (0xFFFF)
 
 // =================================
 // SETUP PARA O LCD16x2
@@ -30,7 +24,7 @@
 void init_periferico_lcd16x2(void)
 {
     LCD_BRIDGE_RCC |= RCC_AHB1ENR_GPIOAEN;
-    DELAY_TIMER_BRIDGE |= RCC_APB2ENR_TIM11EN;
+    
 
     LCD_DATA_PORT->MODER &= ~((0x3 << (LCD_GPIO_D4 << 1)) |
                               (0x3 << (LCD_GPIO_D5 << 1)) |
@@ -48,13 +42,6 @@ void init_periferico_lcd16x2(void)
 
     LCD_CMD_PORT->MODER |= ((0x1 << (LCD_GPIO_EN << 1)) |
                             (0x1 << (LCD_GPIO_RS << 1)));
-
-    DELAY_TIMER->PSC = DELAY_TIMER_PRESCALE;
-    DELAY_TIMER->ARR = DELAY_TIEMR_ARR;
-    DELAY_TIMER->EGR |= TIM_EGR_UG;
-    DELAY_TIMER->CNT = 0;
-
-    DELAY_TIMER->CR1 |= TIM_CR1_CEN;
 }
 
 void write_d4(uint8_t state)
@@ -103,15 +90,5 @@ void write_rs(uint8_t state)
         LCD_CMD_PORT->BSRR |= (1 << LCD_GPIO_RS);
     else
         LCD_CMD_PORT->BSRR |= (1 << (LCD_GPIO_RS + 16));
-}
-
-// @brief Caso nao tenha modificado nada, cada valor
-// do contador correponde a 40e-8 s (40 ns)
-void delay_lcd(uint32_t ticks)
-{
-    uint16_t start = DELAY_TIMER->CNT;
-
-    while ((uint16_t)(DELAY_TIMER->CNT - start) < ticks)
-        ;
 }
 #endif
