@@ -16,6 +16,7 @@
 #define LCD_BRIDGE_RCC RCC->AHB1ENR
 #define LCD_BRIDGE_RCC_ENABLE RCC_AHB1ENR_GPIOAEN
 
+#define DELAY_TIMER_BRIDGE RCC->APB2ENR
 #define DELAY_TIMER TIM11
 
 // frequencia de 1907.37Hz
@@ -29,8 +30,8 @@
 void init_periferico_lcd16x2(void)
 {
     LCD_BRIDGE_RCC |= RCC_AHB1ENR_GPIOAEN;
+    DELAY_TIMER_BRIDGE |= RCC_APB2ENR_TIM11EN;
 
-    // Pinos A0,A1,A2,A3,A4 e A5 como output
     LCD_DATA_PORT->MODER &= ~((0x3 << (LCD_GPIO_D4 << 1)) |
                               (0x3 << (LCD_GPIO_D5 << 1)) |
                               (0x3 << (LCD_GPIO_D6 << 1)) |
