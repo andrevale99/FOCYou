@@ -54,7 +54,7 @@ typedef struct
     lcd16x2_pin_t en;
     lcd16x2_pin_t rs;
 
-    void (*delay)(uint32_t);
+    void (*delay_ns)(uint32_t);
 } lcd16x2_handle;
 
 /**

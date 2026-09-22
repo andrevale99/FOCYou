@@ -12,13 +12,13 @@
  */
 static void pulse_enable(const lcd16x2_handle *handle)
 {
-    handle->delay(1);
+    handle->delay_ns(1);
 
     handle->en.write(1);
-    handle->delay(1);
+    handle->delay_ns(450);
     handle->en.write(0);
 
-    handle->delay(1);
+    handle->delay_ns(1);
 }
 
 int8_t lcd16x2_init_4bits(const lcd16x2_handle *handle, void (*init_func)(void))
@@ -26,12 +26,12 @@ int8_t lcd16x2_init_4bits(const lcd16x2_handle *handle, void (*init_func)(void))
     if(!init_func)
         return -1;
 
-    if (!(handle->delay) || !handle)
+    if (!(handle->delay_ns) || !handle)
         return -2;
 
     init_func();
 
-    handle->delay(100);
+    handle->delay_ns(5000000);
 
     handle->rs.write(0);
 
@@ -41,15 +41,15 @@ int8_t lcd16x2_init_4bits(const lcd16x2_handle *handle, void (*init_func)(void))
     handle->d6.write(0);
     handle->d7.write(0);
     pulse_enable(handle);
-    handle->delay(1);
+    handle->delay_ns(1);
 
     /* 0x3 */
     pulse_enable(handle);
-    handle->delay(1);
+    handle->delay_ns(1);
 
     /* 0x3 */
     pulse_enable(handle);
-    handle->delay(1);
+    handle->delay_ns(1);
 
     /* 0x2 → 4 bits */
     handle->d4.write(0);
@@ -57,13 +57,13 @@ int8_t lcd16x2_init_4bits(const lcd16x2_handle *handle, void (*init_func)(void))
     handle->d6.write(0);
     handle->d7.write(0);
     pulse_enable(handle);
-    handle->delay(1);
+    handle->delay_ns(1);
 
     lcd16x2_send_cmd(handle, BITS_4 | LINES_2);
     lcd16x2_send_cmd(handle, DISPLAY_OFF);
 
     lcd16x2_send_cmd(handle, CLEAR_DISPLAY);
-    handle->delay(1);
+    handle->delay_ns(1);
 
     lcd16x2_send_cmd(handle, INCREMENT); // Entry mode set
 
@@ -91,7 +91,7 @@ void lcd16x2_send_cmd(const lcd16x2_handle *handle, uint8_t cmd)
 
     pulse_enable(handle);
 
-    handle->delay(1);
+    handle->delay_ns(1);
 }
 
 void lcd16x2_send_data(const lcd16x2_handle *handle, uint8_t data)
@@ -113,7 +113,7 @@ void lcd16x2_send_data(const lcd16x2_handle *handle, uint8_t data)
 
     pulse_enable(handle);
 
-    handle->delay(1); // pode reduzir depois
+    handle->delay_ns(1); // pode reduzir depois
 }
 
 void lcd16x2_write_string(const lcd16x2_handle *handle, const char *str, uint8_t size)
