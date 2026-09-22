@@ -21,13 +21,13 @@ static void pulse_enable(const lcd16x2_handle *handle)
     handle->delay_ns(1);
 }
 
-int8_t lcd16x2_init_4bits(const lcd16x2_handle *handle, void (*init_func)(void))
+lcd_err_t lcd16x2_init_4bits(const lcd16x2_handle *handle, void (*init_func)(void))
 {
     if(!init_func)
-        return -1;
+        return LCD_ERR_INVALID_ARG;
 
     if (!(handle->delay_ns) || !handle)
-        return -2;
+        return LCD_ERR_INVALID_ARG;
 
     init_func();
 

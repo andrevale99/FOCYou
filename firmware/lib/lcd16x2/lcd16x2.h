@@ -39,6 +39,12 @@
 
 #define SET_DDRAM 0x80
 
+typedef enum
+{
+    LCD_OK = 0,
+    LCD_ERR_INVALID_ARG = -1,
+}lcd_err_t;
+
 typedef struct
 {
     void (*write)(uint8_t);
@@ -70,12 +76,11 @@ typedef struct
  *                  pela interface do display.
  *
  * @retval 0 Inicialização concluída com sucesso.
- * @retval -1 Ponteiro para a função de inicialização inválido.
- * @retval -2 Estrutura de controle inválida ou função de atraso não definida.
+ * @retval LCD_ERR_INVALID_ARG Ponteiro para a função de inicialização inválido.
  *
  * @note A função init_func() deve configurar todos os pinos do LCD como saída.
  */
-int8_t lcd16x2_init_4bits(const lcd16x2_handle *handle, void (*init_func)(void));
+lcd_err_t lcd16x2_init_4bits(const lcd16x2_handle *handle, void (*init_func)(void));
 
 /**
  * @brief Envia um comando para o display LCD.
