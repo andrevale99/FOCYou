@@ -1,8 +1,9 @@
 #ifndef SYS_LCD_H
 #define SYS_LCD_H
 
+#include <stm32f4xx_hal.h>
+
 #include "lcd16x2.h"
-#include "delay_timer.h"
 #include "drivers/driver_lcd16x2.h"
 
 static lcd16x2_handle_t lcd = {
@@ -14,7 +15,7 @@ static lcd16x2_handle_t lcd = {
     .en.write = write_en,
     .rs.write = write_rs,
 
-    .delay_ns = delay_ns,
+    .delay_ms = HAL_Delay,
 };
 
 void sys_lcd_init(void)

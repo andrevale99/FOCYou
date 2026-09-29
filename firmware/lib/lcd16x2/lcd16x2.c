@@ -12,13 +12,13 @@
  */
 static void pulse_enable(const lcd16x2_handle_t *handle)
 {
-    handle->delay_ns(1);
+    handle->delay_ms(1);
 
     handle->en.write(1);
-    handle->delay_ns(450);
+    handle->delay_ms(450);
     handle->en.write(0);
 
-    handle->delay_ns(1);
+    handle->delay_ms(1);
 }
 
 lcd_err_t lcd16x2_init_4bits(const lcd16x2_handle_t *handle, void (*init_func)(void))
@@ -26,12 +26,12 @@ lcd_err_t lcd16x2_init_4bits(const lcd16x2_handle_t *handle, void (*init_func)(v
     if(!init_func)
         return LCD_ERR_INVALID_ARG;
 
-    if (!(handle->delay_ns) || !handle)
+    if (!(handle->delay_ms) || !handle)
         return LCD_ERR_INVALID_ARG;
 
     init_func();
 
-    handle->delay_ns(5000000);
+    handle->delay_ms(5000000);
 
     handle->rs.write(0);
 
@@ -41,15 +41,15 @@ lcd_err_t lcd16x2_init_4bits(const lcd16x2_handle_t *handle, void (*init_func)(v
     handle->d6.write(0);
     handle->d7.write(0);
     pulse_enable(handle);
-    handle->delay_ns(1);
+    handle->delay_ms(1);
 
     /* 0x3 */
     pulse_enable(handle);
-    handle->delay_ns(1);
+    handle->delay_ms(1);
 
     /* 0x3 */
     pulse_enable(handle);
-    handle->delay_ns(1);
+    handle->delay_ms(1);
 
     /* 0x2 → 4 bits */
     handle->d4.write(0);
@@ -57,13 +57,13 @@ lcd_err_t lcd16x2_init_4bits(const lcd16x2_handle_t *handle, void (*init_func)(v
     handle->d6.write(0);
     handle->d7.write(0);
     pulse_enable(handle);
-    handle->delay_ns(1);
+    handle->delay_ms(1);
 
     lcd16x2_send_cmd(handle, BITS_4 | LINES_2);
     lcd16x2_send_cmd(handle, DISPLAY_OFF);
 
     lcd16x2_send_cmd(handle, CLEAR_DISPLAY);
-    handle->delay_ns(1);
+    handle->delay_ms(1);
 
     lcd16x2_send_cmd(handle, INCREMENT); // Entry mode set
 
@@ -91,7 +91,7 @@ void lcd16x2_send_cmd(const lcd16x2_handle_t *handle, uint8_t cmd)
 
     pulse_enable(handle);
 
-    handle->delay_ns(1);
+    handle->delay_ms(1);
 }
 
 void lcd16x2_send_data(const lcd16x2_handle_t *handle, uint8_t data)
@@ -113,7 +113,7 @@ void lcd16x2_send_data(const lcd16x2_handle_t *handle, uint8_t data)
 
     pulse_enable(handle);
 
-    handle->delay_ns(1); // pode reduzir depois
+    handle->delay_ms(1); // pode reduzir depois
 }
 
 void lcd16x2_write_string(const lcd16x2_handle_t *handle, const char *str, uint8_t size)
