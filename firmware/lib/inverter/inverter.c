@@ -1,7 +1,5 @@
 #include "inverter.h"
 
-#include "drivers/gpio/driver_gpio.h"
-
 inverter_error_t inverter_init(inverter_config_t *config)
 {
     if (config == NULL)

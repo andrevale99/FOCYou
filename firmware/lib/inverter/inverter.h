@@ -6,6 +6,8 @@
 
 #include <stm32f411xe.h>
 
+#include "drivers/gpio/driver_gpio.h"
+
 #define MAX_CHN_INVERTER 3
 
 typedef enum
