@@ -2,6 +2,8 @@
 #include "main.h"
 #include "cmsis_os.h"
 
+#include "inverter.h"
+
 /* Private includes ----------------------------------------------------------*/
 
 /* Private typedef -----------------------------------------------------------*/
