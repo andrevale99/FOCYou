@@ -35,9 +35,13 @@ void StartDefaultTask(void *argument);
 int main(void)
 {
   /* MCU Configuration--------------------------------------------------------*/
+  driver_gpio_enable_clock(GPIOC);
+  driver_gpio_set_mode(GPIOC, 13, DRIVER_GPIO_OUTPUT);
+  driver_gpio_write_pin(GPIOC, 13, DRIVER_GPIO_PIN_SET);
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
+  if (HAL_Init() != HAL_OK)
+    Error_Handler();
 
   /* Configure the system clock */
   SystemClock_Config();
@@ -45,7 +49,8 @@ int main(void)
   /* Initialize all configured peripherals */
 
   /* Init scheduler */
-  osKernelInitialize();
+  if (osKernelInitialize() != osOK)
+    Error_Handler();
 
   /* Create the thread(s) */
   /* creation of defaultTask */
@@ -117,7 +122,12 @@ void StartDefaultTask(void *argument)
   /* Infinite loop */
   for (;;)
   {
-    osDelay(1);
+    driver_gpio_write_pin(GPIOC, 13, DRIVER_GPIO_PIN_RESET);
+    HAL_Delay(1000);
+    // osDelay(pdMS_TO_TICKS(250));
+    driver_gpio_write_pin(GPIOC, 13, DRIVER_GPIO_PIN_SET);
+    HAL_Delay(1000);
+    osDelay(pdMS_TO_TICKS(250));
   }
 }
 

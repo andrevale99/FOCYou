@@ -23,6 +23,8 @@
 /*           Cortex-M4 Processor Interruption and Exception Handlers          */
 /******************************************************************************/
 
+extern TIM_HandleTypeDef htim11;
+
 /**
  * @brief This function handles Non maskable interrupt.
  */
@@ -104,4 +106,5 @@ void ADC_IRQHandler(void)
  */
 void TIM1_TRG_COM_TIM11_IRQHandler(void)
 {
+  HAL_TIM_IRQHandler(&htim11);
 }
