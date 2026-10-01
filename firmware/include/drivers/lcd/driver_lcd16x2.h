@@ -18,7 +18,7 @@
 // SETUP PARA O LCD16x2
 // =================================
 
-static inline driver_gpio_err_t init_periferico_lcd16x2(void)
+static inline driver_gpio_err_t driver_lcd16x2_init(void)
 {
     static const uint16_t data_pins[] = {LCD_GPIO_D4, LCD_GPIO_D5, LCD_GPIO_D6, LCD_GPIO_D7};
     static const uint16_t cmd_pins[]  = {LCD_GPIO_EN, LCD_GPIO_RS};
