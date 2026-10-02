@@ -1,174 +1,44 @@
-/* Includes ------------------------------------------------------------------*/
-#include "main.h"
-#include "cmsis_os.h"
+#include "stm32f4xx.h"
+#include "FreeRTOS.h"
+#include "task.h"
 
-#include "drivers/gpio/driver_gpio.h"
+#include "inverter.h"
 
-/* Private includes ----------------------------------------------------------*/
+/* LED da Black Pill: PC13 (ativo em nivel baixo) */
+#define LED_PORT        GPIOC
+#define LED_PIN         13U
+#define LED_CLK_EN      RCC_AHB1ENR_GPIOCEN
 
-/* Private typedef -----------------------------------------------------------*/
+static void led_init(void)
+{
+    RCC->AHB1ENR |= LED_CLK_EN;
+    (void)RCC->AHB1ENR;                             /* atraso para o clock estabilizar */
 
-/* Private define ------------------------------------------------------------*/
+    LED_PORT->MODER   &= ~(3U << (LED_PIN * 2U));
+    LED_PORT->MODER   |=  (1U << (LED_PIN * 2U));   /* saida */
+    LED_PORT->OTYPER  &= ~(1U << LED_PIN);          /* push-pull */
+    LED_PORT->OSPEEDR &= ~(3U << (LED_PIN * 2U));   /* baixa velocidade */
+    LED_PORT->PUPDR   &= ~(3U << (LED_PIN * 2U));   /* sem pull */
+}
 
-/* Private macro -------------------------------------------------------------*/
+static void vBlinkTask(void *pvParameters)
+{
+    (void)pvParameters;
 
-/* Private variables ---------------------------------------------------------*/
+    for (;;) {
+        LED_PORT->ODR ^= (1U << LED_PIN);           /* alterna o LED */
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+}
 
-/* Definitions for defaultTask */
-osThreadId_t defaultTaskHandle;
-const osThreadAttr_t defaultTask_attributes = {
-    .name = "defaultTask",
-    .stack_size = 128 * 4,
-    .priority = (osPriority_t)osPriorityNormal,
-};
-
-/* Private function prototypes -----------------------------------------------*/
-void SystemClock_Config(void);
-void StartDefaultTask(void *argument);
-
-/* Private user code ---------------------------------------------------------*/
-
-/**
- * @brief  The application entry point.
- * @retval int
- */
 int main(void)
 {
-  /* MCU Configuration--------------------------------------------------------*/
-  driver_gpio_enable_clock(GPIOC);
-  driver_gpio_set_mode(GPIOC, 13, DRIVER_GPIO_OUTPUT);
-  driver_gpio_write_pin(GPIOC, 13, DRIVER_GPIO_PIN_SET);
+    SystemCoreClockUpdate();    /* HSI 16 MHz */
+    led_init();
 
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  if (HAL_Init() != HAL_OK)
-    Error_Handler();
+    xTaskCreate(vBlinkTask, "blink", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
 
-  /* Configure the system clock */
-  SystemClock_Config();
+    vTaskStartScheduler();      /* nao retorna */
 
-  /* Initialize all configured peripherals */
-
-  /* Init scheduler */
-  if (osKernelInitialize() != osOK)
-    Error_Handler();
-
-  /* Create the thread(s) */
-  /* creation of defaultTask */
-  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
-
-  /* Start scheduler */
-  osKernelStart();
-
-  /* We should never get here as control is now taken by the scheduler */
-
-  /* Infinite loop */
-  while (1)
-  {
-  }
+    for (;;) { }                /* so chega aqui se faltar heap */
 }
-
-/**
- * @brief System Clock Configuration
- * @retval None
- */
-void SystemClock_Config(void)
-{
-  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
-  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
-
-  /** Configure the main internal regulator output voltage
-   */
-  __HAL_RCC_PWR_CLK_ENABLE();
-  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
-
-  /** Initializes the RCC Oscillators according to the specified parameters
-   * in the RCC_OscInitTypeDef structure.
-   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
-  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLM = 25;
-  RCC_OscInitStruct.PLL.PLLN = 200;
-  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV4;
-  RCC_OscInitStruct.PLL.PLLQ = 4;
-
-  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /** Initializes the CPU, AHB and APB buses clocks
-   */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
-
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-}
-
-/**
- * @brief  Function implementing the defaultTask thread.
- * @param  argument: Not used
- * @retval None
- */
-void StartDefaultTask(void *argument)
-{
-  /* Infinite loop */
-  for (;;)
-  {
-    driver_gpio_write_pin(GPIOC, 13, DRIVER_GPIO_PIN_RESET);
-    HAL_Delay(1000);
-    // osDelay(pdMS_TO_TICKS(250));
-    driver_gpio_write_pin(GPIOC, 13, DRIVER_GPIO_PIN_SET);
-    HAL_Delay(1000);
-    osDelay(pdMS_TO_TICKS(250));
-  }
-}
-
-/**
- * @brief  Period elapsed callback in non blocking mode
- * @note   This function is called  when TIM11 interrupt took place, inside
- * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
- * a global variable "uwTick" used as application time base.
- * @param  htim : TIM handle
- * @retval None
- */
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
-{
-  if (htim->Instance == TIM11)
-  {
-    HAL_IncTick();
-  }
-}
-
-/**
- * @brief  This function is executed in case of error occurrence.
- * @retval None
- */
-void Error_Handler(void)
-{
-  __disable_irq();
-
-  while (1)
-  {
-  }
-}
-
-#ifdef USE_FULL_ASSERT
-/**
- * @brief  Reports the name of the source file and the source line number
- *         where the assert_param error has occurred.
- * @param  file: pointer to the source file name
- * @param  line: assert_param error line source number
- * @retval None
- */
-void assert_failed(uint8_t *file, uint32_t line)
-{
-}
-#endif /* USE_FULL_ASSERT */
