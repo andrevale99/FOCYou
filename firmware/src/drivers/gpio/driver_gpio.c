@@ -44,7 +44,7 @@ driver_gpio_err_t driver_gpio_set_mode(GPIO_TypeDef *gpiox, uint16_t pin,
     uint32_t shift = (uint32_t)pin << 1;
 
     gpiox->MODER &= ~(0x3UL << shift);
-    gpiox->MODER |=  ((uint32_t)mode << shift);
+    gpiox->MODER |= ((uint32_t)mode << shift);
 
     return DRIVER_GPIO_OK;
 }
@@ -62,7 +62,7 @@ driver_gpio_err_t driver_gpio_set_output_type(GPIO_TypeDef *gpiox, uint16_t pin,
         return DRIVER_ERR_INVALID_MODE;
 
     gpiox->OTYPER &= ~(0x1UL << pin);
-    gpiox->OTYPER |=  ((uint32_t)type << pin);
+    gpiox->OTYPER |= ((uint32_t)type << pin);
 
     return DRIVER_GPIO_OK;
 }
@@ -82,7 +82,7 @@ driver_gpio_err_t driver_gpio_set_speed(GPIO_TypeDef *gpiox, uint16_t pin,
     uint32_t shift = (uint32_t)pin << 1;
 
     gpiox->OSPEEDR &= ~(0x3UL << shift);
-    gpiox->OSPEEDR |=  ((uint32_t)speed << shift);
+    gpiox->OSPEEDR |= ((uint32_t)speed << shift);
 
     return DRIVER_GPIO_OK;
 }
@@ -102,7 +102,7 @@ driver_gpio_err_t driver_gpio_set_pull(GPIO_TypeDef *gpiox, uint16_t pin,
     uint32_t shift = (uint32_t)pin << 1;
 
     gpiox->PUPDR &= ~(0x3UL << shift);
-    gpiox->PUPDR |=  ((uint32_t)pull << shift);
+    gpiox->PUPDR |= ((uint32_t)pull << shift);
 
     return DRIVER_GPIO_OK;
 }
@@ -127,6 +127,20 @@ driver_gpio_err_t driver_gpio_write_pin(GPIO_TypeDef *gpiox, uint16_t pin,
 
     return DRIVER_GPIO_OK;
 }
+
+driver_gpio_err_t driver_gpio_toggle_pin(GPIO_TypeDef *gpiox, uint16_t pin)
+{
+    if (gpiox == NULL)
+        return DRIVER_ERR_NO_GPIO;
+
+    if (pin > 15)
+        return DRIVER_ERR_INVALID_PIN;
+
+    gpiox->ODR ^= (1U << pin);
+
+    return DRIVER_GPIO_OK;
+}
+
 driver_gpio_err_t driver_gpio_set_alternate_function(GPIO_TypeDef *gpiox,
                                                      uint16_t pin,
                                                      uint8_t alternate_mode)
@@ -140,14 +154,14 @@ driver_gpio_err_t driver_gpio_set_alternate_function(GPIO_TypeDef *gpiox,
     if (alternate_mode > 15)
         return DRIVER_ERR_INVALID_MODE;
 
-    uint32_t idx   = pin >> 3;
+    uint32_t idx = pin >> 3;
     uint32_t shift = (pin & 0x7UL) << 2;
 
     gpiox->MODER &= ~(0x3UL << (pin << 1));
-    gpiox->MODER |=  (0x2UL << (pin << 1));
+    gpiox->MODER |= (0x2UL << (pin << 1));
 
     gpiox->AFR[idx] &= ~(0xFUL << shift);
-    gpiox->AFR[idx] |=  ((uint32_t)alternate_mode << shift);
+    gpiox->AFR[idx] |= ((uint32_t)alternate_mode << shift);
 
     return DRIVER_GPIO_OK;
 }
