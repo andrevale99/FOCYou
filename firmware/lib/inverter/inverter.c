@@ -16,15 +16,33 @@ inverter_error_t inverter_init(inverter_config_t *config)
         driver_gpio_enable_clock(gpioxL) != DRIVER_GPIO_OK)
         return INVERTER_ERROR_INVALID_ARGUMENT;
 
+#if defined(TIM1) && defined(RCC_APB2ENR_TIM1EN)
     if (timer == TIM1)
+    {
         RCC->APB2ENR |= RCC_APB2ENR_TIM1EN;
+    }
+#endif
+
+#if defined(TIM8) && defined(RCC_APB2ENR_TIM8EN)
+    else if (timer == TIM8)
+    {
+        RCC->APB2ENR |= RCC_APB2ENR_TIM8EN;
+    }
+#endif
+
+#if defined(TIM20) && defined(RCC_APB2ENR_TIM20EN)
+    else if (timer == TIM20)
+    {
+        RCC->APB2ENR |= RCC_APB2ENR_TIM20EN;
+    }
+#endif
     else
         return INVERTER_ERROR_INVALID_ARGUMENT;
 
     for (uint8_t idx = 0; idx < MAX_CHN_INVERTER; ++idx)
     {
-        const gpio_config_t *cfgH = &config->config_gpioH[idx];
-        const gpio_config_t *cfgL = &config->config_gpioL[idx];
+        const inverter_gpio_config_t *cfgH = &config->config_gpioH[idx];
+        const inverter_gpio_config_t *cfgL = &config->config_gpioL[idx];
 
         if (driver_gpio_set_alternate_function(gpioxH, cfgH->pin, cfgH->alternate_function) != DRIVER_GPIO_OK ||
             driver_gpio_set_alternate_function(gpioxL, cfgL->pin, cfgL->alternate_function) != DRIVER_GPIO_OK)
@@ -47,7 +65,7 @@ inverter_error_t inverter_init(inverter_config_t *config)
     timer->PSC = config->prescale;
 
     timer->CR1 &= ~TIM_CR1_CMS_Msk;
-    timer->CR1 |= TIM_CR1_CMS;                 /* center-aligned mode 3 */
+    timer->CR1 |= TIM_CR1_CMS; /* center-aligned mode 3 */
     timer->CR1 |= TIM_CR1_ARPE;
 
     timer->CCMR1 &= ~(TIM_CCMR1_OC1M_Msk | TIM_CCMR1_OC2M_Msk);
@@ -81,8 +99,26 @@ inverter_error_t inverter_init(inverter_config_t *config)
     return INVERTER_OK;
 }
 
-inverter_error_t inverter_set_state(inverter_state_t state)
+inverter_error_t inverter_set_state(inverter_duty_cycle_t *inverter, inverter_state_t state)
 {
+    if (inverter == NULL)
+        return INVERTER_ERROR_INVALID_ARGUMENT;
+
+    switch (state)
+    {
+    case INVERTER_STATE_ON:
+        inverter->advanced_timer->BDTR |= TIM_BDTR_MOE;
+        break;
+
+    case INVERTER_STATE_OFF:
+        inverter->advanced_timer->BDTR &= ~TIM_BDTR_MOE;
+        break;
+
+    default:
+        return INVERTER_ERROR_NO_STATE;
+        break;
+    }
+
     return INVERTER_OK;
 }
 
@@ -96,4 +132,12 @@ inverter_error_t inverter_set_duty_cycle(inverter_duty_cycle_t *duty_cycle)
     duty_cycle->advanced_timer->CCR3 = duty_cycle->duty_cycle_c;
 
     return INVERTER_OK;
+}
+
+inverter_state_t inverter_get_state(inverter_duty_cycle_t *inverter)
+{
+    if (inverter == NULL)
+        return INVERTER_ERROR_INVALID_ARGUMENT;
+
+    return ((inverter->advanced_timer->BDTR & TIM_BDTR_MOE) ? INVERTER_STATE_ON : INVERTER_STATE_OFF);
 }

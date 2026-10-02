@@ -14,6 +14,7 @@ typedef enum
 {
     INVERTER_OK = 0,
     INVERTER_ERROR_INVALID_ARGUMENT = -1,
+    INVERTER_ERROR_NO_STATE = -2,
 } inverter_error_t;
 
 typedef enum
@@ -26,7 +27,7 @@ typedef struct
 {
     uint16_t pin;
     uint16_t alternate_function;
-} gpio_config_t;
+} inverter_gpio_config_t;
 
 typedef struct
 {
@@ -39,8 +40,8 @@ typedef struct
     GPIO_TypeDef *const gpioH;
     GPIO_TypeDef *const gpioL;
 
-    gpio_config_t config_gpioH[MAX_CHN_INVERTER];
-    gpio_config_t config_gpioL[MAX_CHN_INVERTER];
+    inverter_gpio_config_t config_gpioH[MAX_CHN_INVERTER];
+    inverter_gpio_config_t config_gpioL[MAX_CHN_INVERTER];
 
 } inverter_config_t;
 
@@ -55,7 +56,9 @@ typedef struct
 } inverter_duty_cycle_t;
 
 inverter_error_t inverter_init(inverter_config_t *config);
-inverter_error_t inverter_set_state(inverter_state_t state);
+inverter_error_t inverter_set_state(inverter_duty_cycle_t *inverter,inverter_state_t state);
 inverter_error_t inverter_set_duty_cycle(inverter_duty_cycle_t *duty_cycle);
+
+inverter_state_t inverter_get_state(inverter_duty_cycle_t *inverter);
 
 #endif
