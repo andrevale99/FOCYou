@@ -82,9 +82,8 @@ static void apply_idle(TIM_TypeDef *t, const inverter_idle_config_t *cfg)
 
 static void apply_break(TIM_TypeDef *t, const inverter_break_config_t *cfg)
 {
-    uint32_t bdtr = t->BDTR & ~(TIM_BDTR_BKE | TIM_BDTR_BKP | TIM_BDTR_BKF_Msk | TIM_BDTR_AOE);
+    uint32_t bdtr = t->BDTR & ~(TIM_BDTR_BKE | TIM_BDTR_BKP | TIM_BDTR_AOE);
 
-    bdtr |= ((uint32_t)cfg->filter << TIM_BDTR_BKF_Pos) & TIM_BDTR_BKF_Msk;
     if (cfg->enable)
         bdtr |= TIM_BDTR_BKE;
     if (cfg->active_high)
@@ -108,8 +107,7 @@ inverter_error_t inverter_init(inverter_t *inv, const inverter_config_t *config)
         return INVERTER_ERROR_INVALID_ARGUMENT;
 
     if (config->autorreload == 0U || config->timer_clock_hz == 0U ||
-        (uint32_t)config->alignment > (uint32_t)INVERTER_ALIGN_CENTER_3 ||
-        config->brk.filter > 15U)
+        (uint32_t)config->alignment > (uint32_t)INVERTER_ALIGN_CENTER_3)
         return INVERTER_ERROR_INVALID_ARGUMENT;
 
     TIM_TypeDef *const timer = config->advanced_timer;
@@ -373,7 +371,7 @@ inverter_error_t inverter_set_deadtime_ns(inverter_t *inv, uint32_t deadtime_ns)
 
     if (ticks <= 127U)
     {
-        dtg = (uint8_t)ticks;                          /* 0xx: DT = DTG * tDTS */
+        dtg = (uint8_t)ticks; /* 0xx: DT = DTG * tDTS */
     }
     else if (ticks <= 254U)
     {
@@ -381,14 +379,14 @@ inverter_error_t inverter_set_deadtime_ns(inverter_t *inv, uint32_t deadtime_ns)
     }
     else if (ticks <= 504U)
     {
-        uint64_t v = ticks / 8U;                       /* 110: (32+DTG[4:0]) * 8 tDTS */
+        uint64_t v = ticks / 8U; /* 110: (32+DTG[4:0]) * 8 tDTS */
         if (v < 32U)
             v = 32U;
         dtg = (uint8_t)(0xC0U | (v - 32U));
     }
     else if (ticks <= 1008U)
     {
-        uint64_t v = ticks / 16U;                      /* 111: (32+DTG[4:0]) * 16 tDTS */
+        uint64_t v = ticks / 16U; /* 111: (32+DTG[4:0]) * 16 tDTS */
         if (v < 32U)
             v = 32U;
         dtg = (uint8_t)(0xE0U | (v - 32U));
@@ -473,7 +471,7 @@ inverter_error_t inverter_config_break(inverter_t *inv, const inverter_break_con
     inverter_error_t err = check_ready(inv);
     if (err != INVERTER_OK)
         return err;
-    if (cfg == NULL || cfg->filter > 15U)
+    if (cfg == NULL)
         return INVERTER_ERROR_INVALID_ARGUMENT;
     if (INV_LOCK_LEVEL(inv->timer) >= 1U)
         return INVERTER_ERROR_LOCKED;

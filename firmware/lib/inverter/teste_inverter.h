@@ -121,7 +121,6 @@ typedef struct
 {
     bool enable;           /**< BKE: habilita a entrada de break. */
     bool active_high;      /**< BKP: true = ativo em nível alto. */
-    uint8_t filter;        /**< BKF: filtro digital (0..15). */
     bool automatic_output; /**< AOE: religa o MOE automaticamente no próximo update. */
 } inverter_break_config_t;
 
