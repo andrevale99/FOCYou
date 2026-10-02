@@ -15,7 +15,7 @@ static void pulse_enable(const lcd16x2_handle_t *handle)
     handle->delay_ms(1);
 
     handle->en.write(1);
-    handle->delay_ms(450);
+    handle->delay_ms(1);
     handle->en.write(0);
 
     handle->delay_ms(1);
@@ -31,7 +31,7 @@ lcd_err_t lcd16x2_init_4bits(const lcd16x2_handle_t *handle, void (*init_func)(v
 
     init_func();
 
-    handle->delay_ms(5000000);
+    handle->delay_ms(50);
 
     handle->rs.write(0);
 
