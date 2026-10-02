@@ -4,21 +4,18 @@
 
 #include "inverter.h"
 
+#include "driver_lcd16x2.h"
+
 /* LED da Black Pill: PC13 (ativo em nivel baixo) */
 #define LED_PORT        GPIOC
 #define LED_PIN         13U
-#define LED_CLK_EN      RCC_AHB1ENR_GPIOCEN
 
 static void led_init(void)
 {
-    RCC->AHB1ENR |= LED_CLK_EN;
-    (void)RCC->AHB1ENR;                             /* atraso para o clock estabilizar */
-
-    LED_PORT->MODER   &= ~(3U << (LED_PIN * 2U));
-    LED_PORT->MODER   |=  (1U << (LED_PIN * 2U));   /* saida */
-    LED_PORT->OTYPER  &= ~(1U << LED_PIN);          /* push-pull */
-    LED_PORT->OSPEEDR &= ~(3U << (LED_PIN * 2U));   /* baixa velocidade */
-    LED_PORT->PUPDR   &= ~(3U << (LED_PIN * 2U));   /* sem pull */
+    driver_gpio_enable_clock(LED_PORT);
+    driver_gpio_set_mode(LED_PORT, LED_PIN, DRIVER_GPIO_OUTPUT);
+    driver_gpio_set_pull(LED_PORT, LED_PIN, DRIVER_GPIO_PULL_NONE);
+    driver_gpio_set_speed(LED_PORT, LED_PIN, DRIVER_GPIO_SPEED_LOW);
 }
 
 static void vBlinkTask(void *pvParameters)
@@ -26,8 +23,8 @@ static void vBlinkTask(void *pvParameters)
     (void)pvParameters;
 
     for (;;) {
-        LED_PORT->ODR ^= (1U << LED_PIN);           /* alterna o LED */
-        vTaskDelay(pdMS_TO_TICKS(200));
+        driver_gpio_toggle_pin(LED_PORT,LED_PIN);
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
 
