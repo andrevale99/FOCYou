@@ -4,7 +4,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
-#include "teste_inverter.h"
+#include "inverter.h"
 
 #include "lcd16x2.h"
 #include "driver_lcd16x2.h"
