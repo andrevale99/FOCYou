@@ -13,6 +13,13 @@ static const uint32_t k_ccp_low[MAX_CHN_INVERTER] = {TIM_CCER_CC1NP, TIM_CCER_CC
 static const uint32_t k_ois_high[MAX_CHN_INVERTER] = {TIM_CR2_OIS1, TIM_CR2_OIS2, TIM_CR2_OIS3};
 static const uint32_t k_ois_low[MAX_CHN_INVERTER] = {TIM_CR2_OIS1N, TIM_CR2_OIS2N, TIM_CR2_OIS3N};
 
+/**
+ * @brief Valida o handle antes de qualquer operação.
+ * @param[in] inv Handle do inversor.
+ * @retval INVERTER_OK                     Handle válido e inicializado.
+ * @retval INVERTER_ERROR_INVALID_ARGUMENT @p inv ou @p inv->timer é NULL.
+ * @retval INVERTER_ERROR_NOT_INITIALIZED  inverter_init() ainda não foi chamado.
+ */
 static inverter_error_t check_ready(const inverter_t *inv)
 {
     if (inv == NULL || inv->timer == NULL)
@@ -21,12 +28,24 @@ static inverter_error_t check_ready(const inverter_t *inv)
         return INVERTER_ERROR_NOT_INITIALIZED;
     return INVERTER_OK;
 }
-
+ 
+/**
+ * @brief Informa se o timer está em modo center-aligned (CMS != 0).
+ * @param[in] t Timer a consultar.
+ * @return true se center-aligned; false se edge-aligned.
+ */
 static bool is_center_aligned(const TIM_TypeDef *t)
 {
     return (t->CR1 & TIM_CR1_CMS_Msk) != 0U;
 }
-
+ 
+/**
+ * @brief Escreve o campo OCxM (modo de saída) de uma fase.
+ * @param[in,out] t    Timer.
+ * @param[in]     ch   Índice da fase (0 = A, 1 = B, 2 = C).
+ * @param[in]     mode Valor de 3 bits do OCxM (ver #inverter_output_mode_t).
+ * @note Não verifica o LOCK nem a validade de @p mode; isso é feito pelo chamador.
+ */
 static void write_ocm(TIM_TypeDef *t, uint8_t ch, uint32_t mode)
 {
     switch (ch)
@@ -42,11 +61,18 @@ static void write_ocm(TIM_TypeDef *t, uint8_t ch, uint32_t mode)
         break;
     }
 }
-
+ 
+/**
+ * @brief Aplica a polaridade (CCxP / CCxNP) às três fases.
+ * @param[in,out] t    Timer.
+ * @param[in]     high Polaridade das saídas high.
+ * @param[in]     low  Polaridade das saídas low.
+ * @note Não verifica o LOCK; isso é feito pelo chamador.
+ */
 static void apply_polarity(TIM_TypeDef *t, inverter_polarity_t high, inverter_polarity_t low)
 {
     uint32_t ccer = t->CCER;
-
+ 
     for (uint8_t i = 0; i < MAX_CHN_INVERTER; ++i)
     {
         ccer &= ~(k_ccp_high[i] | k_ccp_low[i]);
@@ -57,11 +83,17 @@ static void apply_polarity(TIM_TypeDef *t, inverter_polarity_t high, inverter_po
     }
     t->CCER = ccer;
 }
-
+ 
+/**
+ * @brief Aplica o estado idle das saídas (OISx/OISxN no CR2 e OSSR/OSSI no BDTR).
+ * @param[in,out] t   Timer.
+ * @param[in]     cfg Configuração do estado idle.
+ * @note Não verifica o LOCK; isso é feito pelo chamador.
+ */
 static void apply_idle(TIM_TypeDef *t, const inverter_idle_config_t *cfg)
 {
     uint32_t cr2 = t->CR2;
-
+ 
     for (uint8_t i = 0; i < MAX_CHN_INVERTER; ++i)
     {
         cr2 &= ~(k_ois_high[i] | k_ois_low[i]);
@@ -71,7 +103,7 @@ static void apply_idle(TIM_TypeDef *t, const inverter_idle_config_t *cfg)
             cr2 |= k_ois_low[i];
     }
     t->CR2 = cr2;
-
+ 
     uint32_t bdtr = t->BDTR & ~(TIM_BDTR_OSSR | TIM_BDTR_OSSI);
     if (cfg->off_state_run)
         bdtr |= TIM_BDTR_OSSR;
@@ -79,11 +111,17 @@ static void apply_idle(TIM_TypeDef *t, const inverter_idle_config_t *cfg)
         bdtr |= TIM_BDTR_OSSI;
     t->BDTR = bdtr;
 }
-
+ 
+/**
+ * @brief Aplica a configuração de break no BDTR.
+ * @param[in,out] t   Timer.
+ * @param[in]     cfg Configuração do break.
+ * @note Não verifica o LOCK; isso é feito pelo chamador.
+ */
 static void apply_break(TIM_TypeDef *t, const inverter_break_config_t *cfg)
 {
     uint32_t bdtr = t->BDTR & ~(TIM_BDTR_BKE | TIM_BDTR_BKP | TIM_BDTR_AOE);
-
+ 
     if (cfg->enable)
         bdtr |= TIM_BDTR_BKE;
     if (cfg->active_high)
