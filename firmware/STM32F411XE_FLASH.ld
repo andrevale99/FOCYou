@@ -29,7 +29,13 @@ SECTIONS {
   .data : { . = ALIGN(4); _sdata = .; *(.data*) . = ALIGN(4); _edata = .; } >RAM AT> FLASH
   .bss  : { . = ALIGN(4); _sbss = .; *(.bss*) *(COMMON) . = ALIGN(4); _ebss = .; } >RAM
 
-  ._user_heap_stack : {
-    . = ALIGN(8); end = .; . = . + _Min_Heap_Size; . = . + _Min_Stack_Size; . = ALIGN(8);
+   /* Heap começa aqui; _sbrk() usa _end */
+  ._user_heap_stack :
+  {
+    . = ALIGN(8);
+    PROVIDE ( end = . );
+    PROVIDE ( _end = . );
+    . = . + _Min_Stack_Size;
+    . = ALIGN(8);
   } >RAM
 }
