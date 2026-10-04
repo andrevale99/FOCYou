@@ -2,104 +2,107 @@
 #define UART_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #include <stm32f411xe.h>
 
 #include "drivers/driver_err.h"
-
+#include "drivers/gpio/driver_gpio.h"
 
 /**
- * @brief Inicializa a interface USART1.
+ * @brief Configuração de uma interface USART.
  *
- * Configura os pinos PA9 e PA10 para a função alternativa AF7,
- * habilita os clocks necessários e configura o periférico USART1
- * para transmissão e recepção de dados.
+ * Agrupa o periférico, o clock, o baudrate e os pinos de TX/RX.
+ * Instâncias suportadas no STM32F411: USART1, USART2 e USART6.
  *
- * A comunicação é configurada com:
+ * Exemplo (USART1 em PA9/PA10, APB2 = 25 MHz):
+ * @code
+ * const uart_config_t cfg = {
+ *     .usart = USART1,
+ *     .clock_hz = 25000000U,
+ *     .baudrate = 115200U,
+ *     .gpio = GPIOA,
+ *     .tx_pin = 9,
+ *     .rx_pin = 10,
+ *     .alternate_function = 7,
+ * };
+ * @endcode
+ */
+typedef struct
+{
+    USART_TypeDef *usart;        /**< Periférico: USART1, USART2 ou USART6. */
+
+    uint32_t clock_hz;           /**< Clock do periférico (APB2 para USART1/6, APB1 para USART2), em Hz. */
+    uint32_t baudrate;           /**< Taxa de transmissão desejada, em baud. */
+
+    GPIO_TypeDef *gpio;          /**< Porta GPIO dos pinos TX e RX. */
+    uint16_t tx_pin;             /**< Pino de TX (0 a 15). */
+    uint16_t rx_pin;             /**< Pino de RX (0 a 15). */
+    uint8_t alternate_function;  /**< Alternate function dos pinos (AF7 para USART1/2, AF8 para USART6). */
+} uart_config_t;
+
+/**
+ * @brief Inicializa uma interface USART.
+ *
+ * Habilita os clocks, configura os pinos de TX/RX e o periférico com:
  * - 8 bits de dados;
  * - 1 bit de parada;
- * - Sem controle de fluxo por hardware;
- * - Oversampling por 16;
- * - Baudrate definido pelo parâmetro @p baudrate.
+ * - sem controle de fluxo por hardware;
+ * - oversampling por 16;
+ * - baudrate definido em @c config->baudrate.
  *
- * O clock utilizado para o cálculo do registrador BRR deve
- * corresponder à frequência do clock fornecido ao USART1 pelo APB2.
- *
- * @param[in] clock
- *     Frequência do clock do USART1, em Hz.
- *
- * @param[in] baudrate
- *     Taxa de transmissão desejada, em baud.
- *
- * @note
- *     O USART1 é conectado ao barramento APB2 do STM32F411.
- *
- * @note
- *     Os pinos PA9 e PA10 são configurados com Alternate Function 7,
- *     correspondente ao USART1.
- *
- * @warning
- *     O valor de @p clock deve corresponder ao clock real do APB2.
- *     Um valor incorreto resulta em erro no baudrate configurado.
+ * @param[in] config Configuração da interface.
  *
  * @return Código indicando o resultado da operação.
  *
  * @retval DRIVER_OK
- *     USART1 configurada com sucesso.
+ *     USART configurada com sucesso.
  *
  * @retval DRIVER_ERR_INVALID_ARG
- *     @p clock ou @p baudrate menor ou igual a zero, ou divisão fora do
- *     alcance do registrador BRR (16 bits).
+ *     @p config ou @c config->usart é NULL, instância não suportada,
+ *     @c clock_hz ou @c baudrate igual a zero, ou divisão fora do alcance
+ *     do registrador BRR (16 bits).
+ *
+ * @return Também propaga os erros do driver GPIO (ex.: DRIVER_ERR_NO_GPIO,
+ *         DRIVER_ERR_INVALID_PIN) caso a configuração dos pinos falhe.
+ *
+ * @warning
+ *     @c clock_hz deve corresponder ao clock real do barramento do periférico.
+ *     Um valor incorreto resulta em erro no baudrate configurado.
  */
-driver_err_t usart1_init(int clock, int baudrate);
+driver_err_t uart_init(const uart_config_t *config);
 
 /**
- * @brief Transmite um caractere pela USART1.
+ * @brief Transmite um caractere por uma USART.
  *
- * Aguarda até que o registrador de dados de transmissão esteja
- * disponível e, em seguida, escreve o caractere no registrador DR
- * do USART1.
+ * Aguarda (busy-wait) o registrador de transmissão ficar livre e escreve
+ * o caractere em DR.
  *
- * @param[in] c
- *     Caractere a ser transmitido.
- *
- * @note
- *     A função utiliza espera ocupada (busy-wait) enquanto o
- *     registrador de transmissão não estiver disponível.
- *
- * @return Código indicando o resultado da operação.
+ * @param[in] usart Periférico previamente inicializado com uart_init().
+ * @param[in] c     Caractere a ser transmitido.
  *
  * @retval DRIVER_OK
  *     Caractere escrito no registrador DR.
+ *
+ * @retval DRIVER_ERR_INVALID_ARG
+ *     @p usart é NULL.
  */
-driver_err_t usart1_send_char(char c);
+driver_err_t uart_send_char(USART_TypeDef *usart, char c);
 
 /**
- * @brief Transmite uma string pela USART1.
+ * @brief Transmite uma string por uma USART.
  *
- * Percorre a string caractere por caractere e utiliza
- * @ref usart1_send_char para realizar a transmissão.
+ * Bloqueia até que todos os caracteres sejam enviados ao periférico.
  *
- * @param[in] str
- *     Ponteiro para a string terminada pelo caractere nulo
- *     ('\0') a ser transmitida.
- *
- * @note
- *     A função permanece bloqueada até que todos os caracteres
- *     da string sejam transmitidos para o periférico USART1.
- *
- * @warning
- *     O ponteiro @p str deve apontar para uma string válida
- *     terminada em '\0'.
- *
- * @return Código indicando o resultado da operação.
+ * @param[in] usart Periférico previamente inicializado com uart_init().
+ * @param[in] str   String terminada em '\0'.
  *
  * @retval DRIVER_OK
  *     String transmitida por completo.
  *
  * @retval DRIVER_ERR_INVALID_ARG
- *     @p str é NULL.
+ *     @p usart ou @p str é NULL.
  */
-driver_err_t usart1_send_string(const char *str);
+driver_err_t uart_send_string(USART_TypeDef *usart, const char *str);
 
 #endif

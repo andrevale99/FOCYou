@@ -1,156 +1,122 @@
 #include "uart.h"
 
-driver_err_t usart1_init(int clock, int baudrate)
+/**
+ * @brief Habilita o clock do barramento para a instância USART.
+ * @retval DRIVER_OK                 Clock habilitado.
+ * @retval DRIVER_ERR_INVALID_ARG    Instância não suportada no STM32F411.
+ */
+static driver_err_t uart_enable_clock(const USART_TypeDef *usart)
 {
-    if (clock <= 0 || baudrate <= 0)
+    if (usart == USART1)
+        RCC->APB2ENR |= RCC_APB2ENR_USART1EN;
+    else if (usart == USART2)
+        RCC->APB1ENR |= RCC_APB1ENR_USART2EN;
+    else if (usart == USART6)
+        RCC->APB2ENR |= RCC_APB2ENR_USART6EN;
+    else
         return DRIVER_ERR_INVALID_ARG;
-
-    if ((clock / baudrate) == 0 || (clock / baudrate) > 0xFFFF)
-        return DRIVER_ERR_INVALID_ARG;
-
-    /*
-     * Habilita clock do GPIOA
-     */
-    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
-
-    /*
-     * Habilita clock do USART1
-     *
-     * USART1 está no APB2.
-     */
-    RCC->APB2ENR |= RCC_APB2ENR_USART1EN;
-
-    /* ========================================================
-     * PA9 e PA10 como Alternate Function
-     * ======================================================== */
-
-    /*
-     * MODER:
-     *
-     * 00 = Input
-     * 01 = Output
-     * 10 = Alternate Function
-     * 11 = Analog
-     */
-
-    GPIOA->MODER &= ~(
-        GPIO_MODER_MODER9_Msk |
-        GPIO_MODER_MODER10_Msk);
-
-    GPIOA->MODER |=
-        (2U << GPIO_MODER_MODER9_Pos) |
-        (2U << GPIO_MODER_MODER10_Pos);
-
-    /* ========================================================
-     * Alternate Function 7
-     *
-     * AF7 = USART1 / USART2
-     * ======================================================== */
-
-    GPIOA->AFR[1] &= ~(
-        GPIO_AFRH_AFSEL9_Msk |
-        GPIO_AFRH_AFSEL10_Msk);
-
-    GPIOA->AFR[1] |=
-        (7U << GPIO_AFRH_AFSEL9_Pos) |
-        (7U << GPIO_AFRH_AFSEL10_Pos);
-
-    /* ========================================================
-     * Configuração elétrica
-     * ======================================================== */
-
-    /* Push-pull */
-    GPIOA->OTYPER &= ~(
-        GPIO_OTYPER_OT9 |
-        GPIO_OTYPER_OT10);
-
-    /* High speed */
-    GPIOA->OSPEEDR |=
-        (3U << GPIO_OSPEEDR_OSPEED9_Pos) |
-        (3U << GPIO_OSPEEDR_OSPEED10_Pos);
-
-    /* Sem pull-up/pull-down */
-    GPIOA->PUPDR &= ~(
-        GPIO_PUPDR_PUPD9_Msk |
-        GPIO_PUPDR_PUPD10_Msk);
-
-    /* ========================================================
-     * USART1
-     * ======================================================== */
-
-    /*
-     * USART1 recebe clock de APB2.
-     *
-     * APB2 = 25 MHz
-     *
-     * Baudrate = 115200
-     *
-     * Oversampling = 16
-     *
-     * USARTDIV = 25 MHz / (16 * 115200)
-     *
-     * BRR = 25 MHz / 115200
-     *
-     * BRR ≈ 217
-     */
-
-    USART1->BRR = clock / baudrate;
-
-    /*
-     * CR1
-     *
-     * TE = Transmitter Enable
-     * RE = Receiver Enable
-     * UE = USART Enable
-     */
-
-    USART1->CR1 =
-        USART_CR1_TE |
-        USART_CR1_RE |
-        USART_CR1_UE;
-
-    /*
-     * CR2
-     *
-     * Stop bits = 1
-     *
-     * STOP = 00
-     */
-
-    USART1->CR2 = 0;
-
-    /*
-     * CR3
-     *
-     * Sem hardware flow control
-     */
-
-    USART1->CR3 = 0;
 
     return DRIVER_OK;
 }
 
-driver_err_t usart1_send_char(char c)
+/**
+ * @brief Configura um pino como alternate function push-pull, very high speed, sem pull.
+ */
+static driver_err_t uart_config_pin(GPIO_TypeDef *gpio, uint16_t pin, uint8_t af)
 {
+    driver_err_t err;
+
+    err = driver_gpio_set_alternate_function(gpio, pin, af);
+    if (err != DRIVER_OK)
+        return err;
+
+    err = driver_gpio_set_output_type(gpio, pin, DRIVER_GPIO_OTYPE_PUSHPULL);
+    if (err != DRIVER_OK)
+        return err;
+
+    err = driver_gpio_set_speed(gpio, pin, DRIVER_GPIO_SPEED_VERY_HIGH);
+    if (err != DRIVER_OK)
+        return err;
+
+    return driver_gpio_set_pull(gpio, pin, DRIVER_GPIO_PULL_NONE);
+}
+
+driver_err_t uart_init(const uart_config_t *config)
+{
+    if (config == NULL || config->usart == NULL)
+        return DRIVER_ERR_INVALID_ARG;
+
+    if (config->clock_hz == 0U || config->baudrate == 0U)
+        return DRIVER_ERR_INVALID_ARG;
+
+    /*
+     * Oversampling = 16: BRR = fclk / baud (mantissa 12 bits + fração 4 bits),
+     * arredondado para o inteiro mais próximo.
+     */
+    const uint32_t brr = (config->clock_hz + (config->baudrate / 2U)) / config->baudrate;
+
+    if (brr == 0U || brr > 0xFFFFU)
+        return DRIVER_ERR_INVALID_ARG;
+
+    USART_TypeDef *const usart = config->usart;
+    driver_err_t err;
+
+    /* Clock do periférico (também valida a instância) */
+    err = uart_enable_clock(usart);
+    if (err != DRIVER_OK)
+        return err;
+
+    /* GPIO: clock e pinos TX/RX */
+    err = driver_gpio_enable_clock(config->gpio);
+    if (err != DRIVER_OK)
+        return err;
+
+    err = uart_config_pin(config->gpio, config->tx_pin, config->alternate_function);
+    if (err != DRIVER_OK)
+        return err;
+
+    err = uart_config_pin(config->gpio, config->rx_pin, config->alternate_function);
+    if (err != DRIVER_OK)
+        return err;
+
+    /* Configuração do periférico */
+    usart->CR1 = 0;          /* UE = 0 durante a configuração */
+    usart->CR2 = 0;          /* 1 bit de parada */
+    usart->CR3 = 0;          /* sem controle de fluxo */
+
+    usart->BRR = brr;
+
+    usart->CR1 = USART_CR1_TE |
+                 USART_CR1_RE |
+                 USART_CR1_UE;
+
+    return DRIVER_OK;
+}
+
+driver_err_t uart_send_char(USART_TypeDef *usart, char c)
+{
+    if (usart == NULL)
+        return DRIVER_ERR_INVALID_ARG;
+
     /*
      * TXE = Transmit data register empty
      */
-    while (!(USART1->SR & USART_SR_TXE))
+    while (!(usart->SR & USART_SR_TXE))
         ;
 
-    USART1->DR = (uint8_t)c;
+    usart->DR = (uint8_t)c;
 
     return DRIVER_OK;
 }
 
-driver_err_t usart1_send_string(const char *str)
+driver_err_t uart_send_string(USART_TypeDef *usart, const char *str)
 {
-    if (str == NULL)
+    if (usart == NULL || str == NULL)
         return DRIVER_ERR_INVALID_ARG;
 
     while (*str)
     {
-        usart1_send_char(*str++);
+        uart_send_char(usart, *str++);
     }
 
     return DRIVER_OK;
