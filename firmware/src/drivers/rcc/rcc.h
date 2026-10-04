@@ -5,26 +5,7 @@
 
 #include <stm32f411xe.h>
 
-/**
- * @brief Códigos de retorno das funções do módulo RCC.
- *
- * Os códigos são utilizados para indicar o resultado da execução
- * das funções de configuração do sistema de clock.
- */
-typedef enum
-{
-    RCC_OK = 0,                            /**< Operação executada com sucesso. */
-    RCC_ERR_INVALID_CLOCK_SOURCE = -1,    /**< Fonte de clock inválida. */
-    RCC_ERR_INVALID_APB_NUM = -2,         /**< Número do barramento APB inválido. */
-    RCC_ERR_INVALID_APB_DIVIDER = -3,     /**< Divisor do barramento APB inválido. */
-    RCC_ERR_CLOCK_NOT_RDY = -4,           /**< Fonte de clock não está pronta. */
-    RCC_ERR_SET_CLOCK_SOURCE_FAILED = -5, /**< Falha ao selecionar a fonte de clock. */
-
-    RCC_ERR_INVALID_PLL_P_FACTOR = -6, /**< Fator de divisão P do PLL inválido. */
-    RCC_ERR_INVALID_PLL_M_FACTOR = -7, /**< Fator de divisão M do PLL inválido. */
-    RCC_ERR_INVALID_PLL_N_FACTOR = -8  /**< Fator de divisão N do PLL inválido. */
-} rcc_err_t;
-
+#include "drivers/driver_err.h"
 
 /**
  * @brief Fontes de clock disponíveis para o sistema.
@@ -180,19 +161,22 @@ typedef struct
  *
  * @return Código indicando o resultado da operação.
  *
- * @retval RCC_OK
+ * @retval DRIVER_OK
  *     Configuração realizada com sucesso.
  *
- * @retval RCC_ERR_INVALID_CLOCK_SOURCE
+ * @retval DRIVER_ERR_INVALID_ARG
+ *     @p config é NULL.
+ *
+ * @retval DRIVER_ERR_INVALID_CLOCK_SOURCE
  *     Fonte de clock inválida para a configuração solicitada.
  *
- * @retval RCC_ERR_INVALID_APB_NUM
+ * @retval DRIVER_ERR_INVALID_APB_NUM
  *     Número do barramento APB inválido.
  *
- * @retval RCC_ERR_INVALID_APB_DIVIDER
+ * @retval DRIVER_ERR_INVALID_APB_DIVIDER
  *     Divisor de APB inválido.
  *
- * @retval RCC_ERR_INVALID_PLL_P_FACTOR
+ * @retval DRIVER_ERR_INVALID_PLL_P_FACTOR
  *     Fator P do PLL inválido.
  *
  * @note
@@ -203,7 +187,7 @@ typedef struct
  *     O ponteiro @p config deve apontar para uma estrutura de configuração
  *     válida.
  */
-rcc_err_t rcc_init(rcc_config_t *config);
+driver_err_t rcc_init(rcc_config_t *config);
 
 /**
  * @brief Seleciona a fonte de clock do sistema.
@@ -217,10 +201,10 @@ rcc_err_t rcc_init(rcc_config_t *config);
  *
  * @return Código indicando o resultado da operação.
  *
- * @retval RCC_OK
+ * @retval DRIVER_OK
  *     Fonte de clock selecionada com sucesso.
  *
- * @retval RCC_ERR_INVALID_CLOCK_SOURCE
+ * @retval DRIVER_ERR_INVALID_CLOCK_SOURCE
  *     Fonte de clock especificada não é válida.
  *
  * @note
@@ -230,7 +214,7 @@ rcc_err_t rcc_init(rcc_config_t *config);
  *     Quando RCC_PLL é selecionado, o PLL deve ter sido previamente
  *     configurado no registrador RCC_PLLCFGR.
  */
-rcc_err_t rcc_set_system_clock_source(rcc_clock_source_t clock_source);
+driver_err_t rcc_set_system_clock_source(rcc_clock_source_t clock_source);
 
 
 /**
@@ -254,13 +238,16 @@ rcc_err_t rcc_set_system_clock_source(rcc_clock_source_t clock_source);
  *
  * @return Código indicando o resultado da operação.
  *
- * @retval RCC_OK
+ * @retval DRIVER_OK
  *     PLL configurado e estabilizado com sucesso.
  *
- * @retval RCC_ERR_INVALID_CLOCK_SOURCE
+ * @retval DRIVER_ERR_INVALID_ARG
+ *     @p pll é NULL.
+ *
+ * @retval DRIVER_ERR_INVALID_CLOCK_SOURCE
  *     Fonte de clock especificada para o PLL é inválida.
  *
- * @retval RCC_ERR_INVALID_PLL_P_FACTOR
+ * @retval DRIVER_ERR_INVALID_PLL_P_FACTOR
  *     Fator de divisão P inválido. São permitidos os valores 2, 4, 6 e 8.
  *
  * @note
@@ -274,7 +261,7 @@ rcc_err_t rcc_set_system_clock_source(rcc_clock_source_t clock_source);
  *     O ponteiro @p pll deve apontar para uma estrutura de configuração
  *     válida.
  */
-rcc_err_t rcc_configure_pll(rcc_pll_config_t *pll);
+driver_err_t rcc_configure_pll(rcc_pll_config_t *pll);
 
 
 /**
@@ -292,19 +279,19 @@ rcc_err_t rcc_configure_pll(rcc_pll_config_t *pll);
  *
  * @return Código indicando o resultado da operação.
  *
- * @retval RCC_OK
+ * @retval DRIVER_OK
  *     Divisor configurado com sucesso.
  *
- * @retval RCC_ERR_INVALID_APB_NUM
+ * @retval DRIVER_ERR_INVALID_APB_NUM
  *     O número do barramento APB não corresponde a APB1 ou APB2.
  *
- * @retval RCC_ERR_INVALID_APB_DIVIDER
+ * @retval DRIVER_ERR_INVALID_APB_DIVIDER
  *     Divisor APB inválido.
  *
  * @note
  *     Os divisores disponíveis são 1, 2, 4, 8 e 16.
  */
-rcc_err_t rcc_set_apbx_divider(int apb_num, rcc_apb_divider_t divider);
+driver_err_t rcc_set_apbx_divider(int apb_num, rcc_apb_divider_t divider);
 
 /**
  * @brief Configura o divisor do barramento AHB.
@@ -317,21 +304,16 @@ rcc_err_t rcc_set_apbx_divider(int apb_num, rcc_apb_divider_t divider);
  *
  * @return Código indicando o resultado da operação.
  *
- * @retval RCC_OK
+ * @retval DRIVER_OK
  *     Divisor configurado com sucesso.
  *
- * @retval RCC_ERR_INVALID_APB_DIVIDER
+ * @retval DRIVER_ERR_INVALID_AHB_DIVIDER
  *     O divisor fornecido não corresponde a um valor válido.
  *
  * @note
  *     Os divisores disponíveis são 1, 2, 4, 8, 16, 64, 128, 256 e 512.
- *
- * @warning
- *     O código de erro utilizado atualmente é
- *     @c RCC_ERR_INVALID_APB_DIVIDER. Recomenda-se criar um código
- *     específico para divisor AHB, como @c RCC_ERR_INVALID_AHB_DIVIDER.
  */
-rcc_err_t rcc_set_ahb_divider(rcc_ahb_divider_t divider);
+driver_err_t rcc_set_ahb_divider(rcc_ahb_divider_t divider);
 
 /**
  * @brief Obtém a configuração atual do sistema de clock.
@@ -344,6 +326,17 @@ rcc_err_t rcc_set_ahb_divider(rcc_ahb_divider_t divider);
  *     Ponteiro para a estrutura que receberá o estado atual da
  *     configuração do sistema de clock.
  *
+ * @return Código indicando o resultado da operação.
+ *
+ * @retval DRIVER_OK
+ *     Estado lido com sucesso.
+ *
+ * @retval DRIVER_ERR_INVALID_ARG
+ *     @p status é NULL.
+ *
+ * @retval DRIVER_ERR_INVALID_CLOCK_SOURCE
+ *     O campo SWS não corresponde a HSI, HSE ou PLL; @p status não é alterado.
+ *
  * @note
  *     O campo @c clock_source é determinado a partir do campo SWS
  *     do registrador RCC_CFGR.
@@ -353,9 +346,7 @@ rcc_err_t rcc_set_ahb_divider(rcc_ahb_divider_t divider);
  *     recebem diretamente os valores codificados nos respectivos
  *     campos do registrador RCC_CFGR.
  *
- * @warning
- *     O ponteiro @p status deve apontar para uma estrutura válida.
  */
-void rcc_get_clock_status(rcc_clock_status_t *status);
+driver_err_t rcc_get_clock_status(rcc_clock_status_t *status);
 
 #endif

@@ -47,9 +47,12 @@ static void set_wait_state_flash(uint32_t SystemCoreClock)
     }
 }
 
-rcc_err_t rcc_init(rcc_config_t *config)
+driver_err_t rcc_init(rcc_config_t *config)
 {
-    rcc_err_t err;
+    driver_err_t err;
+
+    if (config == NULL)
+        return DRIVER_ERR_INVALID_ARG;
 
     /*
      * Configuração sem PLL
@@ -58,7 +61,7 @@ rcc_err_t rcc_init(rcc_config_t *config)
     {
         err = rcc_set_system_clock_source(config->clock_source);
 
-        if (err != RCC_OK)
+        if (err != DRIVER_OK)
             return err;
     }
 
@@ -114,10 +117,13 @@ rcc_err_t rcc_init(rcc_config_t *config)
          */
         err = rcc_configure_pll(&config->pll_conf);
 
-        if (err != RCC_OK)
+        if (err != DRIVER_OK)
             return err;
 
-        rcc_set_system_clock_source(config->clock_source);
+        err = rcc_set_system_clock_source(config->clock_source);
+
+        if (err != DRIVER_OK)
+            return err;
     }
 
     /*
@@ -131,7 +137,7 @@ rcc_err_t rcc_init(rcc_config_t *config)
      */
     err = rcc_set_ahb_divider(config->ahb_divider);
 
-    if (err != RCC_OK)
+    if (err != DRIVER_OK)
         return err;
 
     /*
@@ -139,7 +145,7 @@ rcc_err_t rcc_init(rcc_config_t *config)
      */
     err = rcc_set_apbx_divider(1, config->apb1_divider);
 
-    if (err != RCC_OK)
+    if (err != DRIVER_OK)
         return err;
 
     /*
@@ -147,7 +153,7 @@ rcc_err_t rcc_init(rcc_config_t *config)
      */
     err = rcc_set_apbx_divider(2, config->apb2_divider);
 
-    if (err != RCC_OK)
+    if (err != DRIVER_OK)
         return err;
 
     /*
@@ -155,10 +161,10 @@ rcc_err_t rcc_init(rcc_config_t *config)
      */
     SystemCoreClockUpdate();
 
-    return RCC_OK;
+    return DRIVER_OK;
 }
 
-rcc_err_t rcc_set_system_clock_source(rcc_clock_source_t clock_source)
+driver_err_t rcc_set_system_clock_source(rcc_clock_source_t clock_source)
 {
     switch (clock_source)
     {
@@ -250,16 +256,19 @@ rcc_err_t rcc_set_system_clock_source(rcc_clock_source_t clock_source)
 
     default:
 
-        return RCC_ERR_INVALID_CLOCK_SOURCE;
+        return DRIVER_ERR_INVALID_CLOCK_SOURCE;
     }
 
-    return RCC_OK;
+    return DRIVER_OK;
 }
 
-rcc_err_t rcc_configure_pll(rcc_pll_config_t *pll)
+driver_err_t rcc_configure_pll(rcc_pll_config_t *pll)
 {
     uint32_t pll_p;
     uint32_t pll_source;
+
+    if (pll == NULL)
+        return DRIVER_ERR_INVALID_ARG;
 
     /*
      * Seleciona a fonte do PLL.
@@ -278,7 +287,7 @@ rcc_err_t rcc_configure_pll(rcc_pll_config_t *pll)
         break;
 
     default:
-        return RCC_ERR_INVALID_CLOCK_SOURCE;
+        return DRIVER_ERR_INVALID_CLOCK_SOURCE;
     }
 
     /*
@@ -288,7 +297,7 @@ rcc_err_t rcc_configure_pll(rcc_pll_config_t *pll)
      */
     if ((pll->m_factor < 2U) || (pll->m_factor > 63U))
     {
-        return RCC_ERR_INVALID_PLL_M_FACTOR;
+        return DRIVER_ERR_INVALID_PLL_M_FACTOR;
     }
 
     /*
@@ -298,7 +307,7 @@ rcc_err_t rcc_configure_pll(rcc_pll_config_t *pll)
      */
     if ((pll->n_factor < 50U) || (pll->n_factor > 432U))
     {
-        return RCC_ERR_INVALID_PLL_N_FACTOR;
+        return DRIVER_ERR_INVALID_PLL_N_FACTOR;
     }
 
     /*
@@ -328,7 +337,7 @@ rcc_err_t rcc_configure_pll(rcc_pll_config_t *pll)
         break;
 
     default:
-        return RCC_ERR_INVALID_PLL_P_FACTOR;
+        return DRIVER_ERR_INVALID_PLL_P_FACTOR;
     }
 
     /*
@@ -363,10 +372,10 @@ rcc_err_t rcc_configure_pll(rcc_pll_config_t *pll)
     while (!(RCC->CR & RCC_CR_PLLRDY))
         ;
 
-    return RCC_OK;
+    return DRIVER_OK;
 }
 
-rcc_err_t rcc_set_apbx_divider(int apb_num, rcc_apb_divider_t divider)
+driver_err_t rcc_set_apbx_divider(int apb_num, rcc_apb_divider_t divider)
 {
 
     switch (divider)
@@ -384,7 +393,7 @@ rcc_err_t rcc_set_apbx_divider(int apb_num, rcc_apb_divider_t divider)
             RCC->CFGR |= RCC_CFGR_PPRE2_DIV1; // Set APB2 divider to 0
         }
         else
-            return RCC_ERR_INVALID_APB_NUM; // Error: Invalid APB number
+            return DRIVER_ERR_INVALID_APB_NUM; // Error: Invalid APB number
         break;
 
     case RCC_APBx_DIV_2:
@@ -400,7 +409,7 @@ rcc_err_t rcc_set_apbx_divider(int apb_num, rcc_apb_divider_t divider)
             RCC->CFGR |= RCC_CFGR_PPRE2_DIV2; // Set APB2 divider to 2
         }
         else
-            return RCC_ERR_INVALID_APB_NUM; // Error: Invalid APB number
+            return DRIVER_ERR_INVALID_APB_NUM; // Error: Invalid APB number
         break;
 
     case RCC_APBx_DIV_4:
@@ -416,7 +425,7 @@ rcc_err_t rcc_set_apbx_divider(int apb_num, rcc_apb_divider_t divider)
             RCC->CFGR |= RCC_CFGR_PPRE2_DIV4; // Set APB2 divider to 4
         }
         else
-            return RCC_ERR_INVALID_APB_NUM; // Error: Invalid APB number
+            return DRIVER_ERR_INVALID_APB_NUM; // Error: Invalid APB number
         break;
 
     case RCC_APBx_DIV_8:
@@ -432,7 +441,7 @@ rcc_err_t rcc_set_apbx_divider(int apb_num, rcc_apb_divider_t divider)
             RCC->CFGR |= RCC_CFGR_PPRE2_DIV8; // Set APB2 divider to 8
         }
         else
-            return RCC_ERR_INVALID_APB_NUM; // Error: Invalid APB number
+            return DRIVER_ERR_INVALID_APB_NUM; // Error: Invalid APB number
         break;
 
     case RCC_APBx_DIV_16:
@@ -448,17 +457,17 @@ rcc_err_t rcc_set_apbx_divider(int apb_num, rcc_apb_divider_t divider)
             RCC->CFGR |= RCC_CFGR_PPRE2_DIV16; // Set APB2 divider to 16
         }
         else
-            return RCC_ERR_INVALID_APB_NUM; // Error: Invalid APB number
+            return DRIVER_ERR_INVALID_APB_NUM; // Error: Invalid APB number
         break;
 
     default:
-        return RCC_ERR_INVALID_APB_DIVIDER; // Error
+        return DRIVER_ERR_INVALID_APB_DIVIDER; // Error
     }
 
-    return RCC_OK;
+    return DRIVER_OK;
 }
 
-rcc_err_t rcc_set_ahb_divider(rcc_ahb_divider_t divider)
+driver_err_t rcc_set_ahb_divider(rcc_ahb_divider_t divider)
 {
     switch (divider)
     {
@@ -508,15 +517,17 @@ rcc_err_t rcc_set_ahb_divider(rcc_ahb_divider_t divider)
         break;
 
     default:
-        return RCC_ERR_INVALID_APB_DIVIDER; // Error
+        return DRIVER_ERR_INVALID_AHB_DIVIDER; // Error
         break;
     }
 
-    return RCC_OK;
+    return DRIVER_OK;
 }
 
-void rcc_get_clock_status(rcc_clock_status_t *status)
+driver_err_t rcc_get_clock_status(rcc_clock_status_t *status)
 {
+    if (status == NULL)
+        return DRIVER_ERR_INVALID_ARG;
 
     // Get clock source
     uint32_t sw = RCC->CFGR & RCC_CFGR_SWS;
@@ -527,7 +538,7 @@ void rcc_get_clock_status(rcc_clock_status_t *status)
     else if (sw == RCC_CFGR_SWS_PLL)
         status->clock_source = RCC_PLL;
     else
-        status->clock_source = RCC_ERR_INVALID_CLOCK_SOURCE; // Invalid clock source
+        return DRIVER_ERR_INVALID_CLOCK_SOURCE;
 
     // Get AHB divider
     uint32_t div = (RCC->CFGR & RCC_CFGR_HPRE) >> 4;
@@ -540,4 +551,6 @@ void rcc_get_clock_status(rcc_clock_status_t *status)
     // Get APB2 divider
     div = (RCC->CFGR & RCC_CFGR_PPRE2) >> 13;
     status->apb2_divider = div;
+
+    return DRIVER_OK;
 }

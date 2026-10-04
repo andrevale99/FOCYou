@@ -1,7 +1,11 @@
 #ifndef UART_H
 #define UART_H
 
+#include <stddef.h>
+
 #include <stm32f411xe.h>
+
+#include "drivers/driver_err.h"
 
 
 /**
@@ -37,8 +41,17 @@
  * @warning
  *     O valor de @p clock deve corresponder ao clock real do APB2.
  *     Um valor incorreto resulta em erro no baudrate configurado.
+ *
+ * @return Código indicando o resultado da operação.
+ *
+ * @retval DRIVER_OK
+ *     USART1 configurada com sucesso.
+ *
+ * @retval DRIVER_ERR_INVALID_ARG
+ *     @p clock ou @p baudrate menor ou igual a zero, ou divisão fora do
+ *     alcance do registrador BRR (16 bits).
  */
-void usart1_init(int clock, int baudrate);
+driver_err_t usart1_init(int clock, int baudrate);
 
 /**
  * @brief Transmite um caractere pela USART1.
@@ -53,8 +66,13 @@ void usart1_init(int clock, int baudrate);
  * @note
  *     A função utiliza espera ocupada (busy-wait) enquanto o
  *     registrador de transmissão não estiver disponível.
+ *
+ * @return Código indicando o resultado da operação.
+ *
+ * @retval DRIVER_OK
+ *     Caractere escrito no registrador DR.
  */
-void usart1_send_char(char c);
+driver_err_t usart1_send_char(char c);
 
 /**
  * @brief Transmite uma string pela USART1.
@@ -73,7 +91,15 @@ void usart1_send_char(char c);
  * @warning
  *     O ponteiro @p str deve apontar para uma string válida
  *     terminada em '\0'.
+ *
+ * @return Código indicando o resultado da operação.
+ *
+ * @retval DRIVER_OK
+ *     String transmitida por completo.
+ *
+ * @retval DRIVER_ERR_INVALID_ARG
+ *     @p str é NULL.
  */
-void usart1_send_string(const char *str);
+driver_err_t usart1_send_string(const char *str);
 
 #endif

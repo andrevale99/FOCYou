@@ -1,7 +1,13 @@
 #include "uart.h"
 
-void usart1_init(int clock, int baudrate)
+driver_err_t usart1_init(int clock, int baudrate)
 {
+    if (clock <= 0 || baudrate <= 0)
+        return DRIVER_ERR_INVALID_ARG;
+
+    if ((clock / baudrate) == 0 || (clock / baudrate) > 0xFFFF)
+        return DRIVER_ERR_INVALID_ARG;
+
     /*
      * Habilita clock do GPIOA
      */
@@ -120,9 +126,11 @@ void usart1_init(int clock, int baudrate)
      */
 
     USART1->CR3 = 0;
+
+    return DRIVER_OK;
 }
 
-void usart1_send_char(char c)
+driver_err_t usart1_send_char(char c)
 {
     /*
      * TXE = Transmit data register empty
@@ -131,12 +139,19 @@ void usart1_send_char(char c)
         ;
 
     USART1->DR = (uint8_t)c;
+
+    return DRIVER_OK;
 }
 
-void usart1_send_string(const char *str)
+driver_err_t usart1_send_string(const char *str)
 {
+    if (str == NULL)
+        return DRIVER_ERR_INVALID_ARG;
+
     while (*str)
     {
         usart1_send_char(*str++);
     }
+
+    return DRIVER_OK;
 }
