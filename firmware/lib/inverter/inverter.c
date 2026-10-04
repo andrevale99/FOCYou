@@ -150,8 +150,8 @@ inverter_error_t inverter_init(inverter_t *inv, const inverter_config_t *config)
 
     TIM_TypeDef *const timer = config->advanced_timer;
 
-    if (driver_gpio_enable_clock(config->gpioH) != DRIVER_GPIO_OK ||
-        driver_gpio_enable_clock(config->gpioL) != DRIVER_GPIO_OK)
+    if (driver_gpio_enable_clock(config->gpioH) != DRIVER_OK ||
+        driver_gpio_enable_clock(config->gpioL) != DRIVER_OK)
         return INVERTER_ERROR_INVALID_ARGUMENT;
 
     for (uint8_t idx = 0; idx < MAX_CHN_INVERTER; ++idx)
@@ -159,20 +159,20 @@ inverter_error_t inverter_init(inverter_t *inv, const inverter_config_t *config)
         const inverter_gpio_config_t *cfgH = &config->config_gpioH[idx];
         const inverter_gpio_config_t *cfgL = &config->config_gpioL[idx];
 
-        if (driver_gpio_set_alternate_function(config->gpioH, cfgH->pin, cfgH->alternate_function) != DRIVER_GPIO_OK ||
-            driver_gpio_set_alternate_function(config->gpioL, cfgL->pin, cfgL->alternate_function) != DRIVER_GPIO_OK)
+        if (driver_gpio_set_alternate_function(config->gpioH, cfgH->pin, cfgH->alternate_function) != DRIVER_OK ||
+            driver_gpio_set_alternate_function(config->gpioL, cfgL->pin, cfgL->alternate_function) != DRIVER_OK)
             return INVERTER_ERROR_INVALID_ARGUMENT;
 
-        if (driver_gpio_set_output_type(config->gpioH, cfgH->pin, DRIVER_GPIO_OTYPE_PUSHPULL) != DRIVER_GPIO_OK ||
-            driver_gpio_set_output_type(config->gpioL, cfgL->pin, DRIVER_GPIO_OTYPE_PUSHPULL) != DRIVER_GPIO_OK)
+        if (driver_gpio_set_output_type(config->gpioH, cfgH->pin, DRIVER_GPIO_OTYPE_PUSHPULL) != DRIVER_OK ||
+            driver_gpio_set_output_type(config->gpioL, cfgL->pin, DRIVER_GPIO_OTYPE_PUSHPULL) != DRIVER_OK)
             return INVERTER_ERROR_INVALID_ARGUMENT;
 
-        if (driver_gpio_set_speed(config->gpioH, cfgH->pin, DRIVER_GPIO_SPEED_VERY_HIGH) != DRIVER_GPIO_OK ||
-            driver_gpio_set_speed(config->gpioL, cfgL->pin, DRIVER_GPIO_SPEED_VERY_HIGH) != DRIVER_GPIO_OK)
+        if (driver_gpio_set_speed(config->gpioH, cfgH->pin, DRIVER_GPIO_SPEED_VERY_HIGH) != DRIVER_OK ||
+            driver_gpio_set_speed(config->gpioL, cfgL->pin, DRIVER_GPIO_SPEED_VERY_HIGH) != DRIVER_OK)
             return INVERTER_ERROR_INVALID_ARGUMENT;
 
-        if (driver_gpio_set_pull(config->gpioH, cfgH->pin, DRIVER_GPIO_PULL_NONE) != DRIVER_GPIO_OK ||
-            driver_gpio_set_pull(config->gpioL, cfgL->pin, DRIVER_GPIO_PULL_NONE) != DRIVER_GPIO_OK)
+        if (driver_gpio_set_pull(config->gpioH, cfgH->pin, DRIVER_GPIO_PULL_NONE) != DRIVER_OK ||
+            driver_gpio_set_pull(config->gpioL, cfgL->pin, DRIVER_GPIO_PULL_NONE) != DRIVER_OK)
             return INVERTER_ERROR_INVALID_ARGUMENT;
     }
 
