@@ -2,8 +2,7 @@
 #define LCD16X2_H
 
 #include <stdint.h>
-
-#include <stm32f411xe.h>
+#include <stddef.h>
 
 #define WRITE 1
 #define CMD 0
@@ -39,11 +38,15 @@
 
 #define SET_DDRAM 0x80
 
+/** @brief Códigos de retorno do driver do LCD 16x2. */
 typedef enum
 {
-    LCD_OK = 0,
-    LCD_ERR_INVALID_ARG = -1,
-}lcd_err_t;
+    LCD_OK = 0,                  /**< Operação executada com sucesso. */
+    LCD_ERR_INVALID_ARG = -1,    /**< Argumento inválido (genérico). */
+    LCD_ERR_NULL_HANDLE = -2,    /**< Ponteiro do handle é NULL. */
+    LCD_ERR_NULL_CALLBACK = -3,  /**< Algum callback é NULL (write de pino, delay_ms ou init_func). */
+    LCD_ERR_NULL_STRING = -4,    /**< Ponteiro da string é NULL. */
+} lcd16x2_err_t;
 
 typedef struct
 {
@@ -75,12 +78,14 @@ typedef struct
  * @param init_func Função responsável por configurar os GPIOs utilizados
  *                  pela interface do display.
  *
- * @retval 0 Inicialização concluída com sucesso.
- * @retval LCD_ERR_INVALID_ARG Ponteiro para a função de inicialização inválido.
+ * @retval LCD_OK                 Inicialização concluída com sucesso.
+ * @retval LCD_ERR_NULL_HANDLE    @p handle é NULL.
+ * @retval LCD_ERR_NULL_CALLBACK  Algum callback de pino, @c delay_ms ou @p init_func é NULL.
  *
  * @note A função init_func() deve configurar todos os pinos do LCD como saída.
+ * @note Toda a validação é feita antes de qualquer escrita nos pinos.
  */
-lcd_err_t lcd16x2_init_4bits(const lcd16x2_handle_t *handle, void (*init_func)(void));
+lcd16x2_err_t lcd16x2_init_4bits(const lcd16x2_handle_t *handle, void (*init_func)(void));
 
 /**
  * @brief Envia um comando para o display LCD.
@@ -92,8 +97,12 @@ lcd_err_t lcd16x2_init_4bits(const lcd16x2_handle_t *handle, void (*init_func)(v
  *
  * @param handle Ponteiro para a estrutura de controle do LCD.
  * @param cmd Comando de 8 bits a ser enviado ao display.
+ *
+ * @retval LCD_OK                 Comando enviado.
+ * @retval LCD_ERR_NULL_HANDLE    @p handle é NULL.
+ * @retval LCD_ERR_NULL_CALLBACK  Algum callback de pino ou @c delay_ms é NULL.
  */
-void lcd16x2_send_cmd(const lcd16x2_handle_t *, uint8_t );
+lcd16x2_err_t lcd16x2_send_cmd(const lcd16x2_handle_t *handle, uint8_t cmd);
 
 /**
  * @brief Envia um dado para o display LCD.
@@ -104,8 +113,12 @@ void lcd16x2_send_cmd(const lcd16x2_handle_t *, uint8_t );
  *
  * @param handle Ponteiro para a estrutura de controle do LCD.
  * @param data Dado de 8 bits a ser enviado ao display.
+ *
+ * @retval LCD_OK                 Dado enviado.
+ * @retval LCD_ERR_NULL_HANDLE    @p handle é NULL.
+ * @retval LCD_ERR_NULL_CALLBACK  Algum callback de pino ou @c delay_ms é NULL.
  */
-void lcd16x2_send_data(const lcd16x2_handle_t *, uint8_t );
+lcd16x2_err_t lcd16x2_send_data(const lcd16x2_handle_t *handle, uint8_t data);
 
 /**
  * @brief Escreve uma sequência de caracteres no display LCD.
@@ -115,8 +128,13 @@ void lcd16x2_send_data(const lcd16x2_handle_t *, uint8_t );
  *
  * @param handle Ponteiro para a estrutura de controle do LCD.
  * @param str Ponteiro para a string a ser escrita.
- * @param size Quantidade de caracteres que serão enviados.
+ * @param size Quantidade de caracteres que serão enviados (0 não envia nada).
+ *
+ * @retval LCD_OK                 Caracteres enviados.
+ * @retval LCD_ERR_NULL_HANDLE    @p handle é NULL.
+ * @retval LCD_ERR_NULL_CALLBACK  Algum callback de pino ou @c delay_ms é NULL.
+ * @retval LCD_ERR_NULL_STRING    @p str é NULL.
  */
-void lcd16x2_write_string(const lcd16x2_handle_t *, const char *sr, uint8_t );
+lcd16x2_err_t lcd16x2_write_string(const lcd16x2_handle_t *handle, const char *str, uint8_t size);
 
 #endif

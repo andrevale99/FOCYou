@@ -1,6 +1,29 @@
 #include "lcd16x2.h"
 
 /**
+ * @brief Valida o handle e todos os callbacks usados pelo driver.
+ *
+ * @param handle Ponteiro para a estrutura de controle do LCD.
+ *
+ * @retval LCD_OK                 Handle e callbacks válidos.
+ * @retval LCD_ERR_NULL_HANDLE    @p handle é NULL.
+ * @retval LCD_ERR_NULL_CALLBACK  Algum callback de pino ou @c delay_ms é NULL.
+ */
+static lcd16x2_err_t validate_handle(const lcd16x2_handle_t *handle)
+{
+    if (handle == NULL)
+        return LCD_ERR_NULL_HANDLE;
+
+    if (handle->d4.write == NULL || handle->d5.write == NULL ||
+        handle->d6.write == NULL || handle->d7.write == NULL ||
+        handle->en.write == NULL || handle->rs.write == NULL ||
+        handle->delay_ms == NULL)
+        return LCD_ERR_NULL_CALLBACK;
+
+    return LCD_OK;
+}
+
+/**
  * @brief Gera um pulso no pino Enable do LCD.
  *
  * Esta função realiza o acionamento do sinal Enable (`EN`) do display,
@@ -8,7 +31,7 @@
  * O pulso respeita pequenos atrasos para garantir a sincronização do
  * controlador LCD.
  *
- * @param handle Ponteiro para a estrutura de controle do LCD.
+ * @param handle Ponteiro (já validado) para a estrutura de controle do LCD.
  */
 static void pulse_enable(const lcd16x2_handle_t *handle)
 {
@@ -21,13 +44,48 @@ static void pulse_enable(const lcd16x2_handle_t *handle)
     handle->delay_ms(1);
 }
 
-lcd_err_t lcd16x2_init_4bits(const lcd16x2_handle_t *handle, void (*init_func)(void))
+/**
+ * @brief Coloca um nibble (4 bits) nas linhas D4..D7.
+ *
+ * @param handle Ponteiro (já validado) para a estrutura de controle do LCD.
+ * @param nibble Valor de 4 bits (bit 0 = D4 ... bit 3 = D7).
+ */
+static void write_nibble(const lcd16x2_handle_t *handle, uint8_t nibble)
 {
-    if(!init_func)
-        return LCD_ERR_INVALID_ARG;
+    handle->d4.write((nibble >> 0) & 0x1);
+    handle->d5.write((nibble >> 1) & 0x1);
+    handle->d6.write((nibble >> 2) & 0x1);
+    handle->d7.write((nibble >> 3) & 0x1);
+}
 
-    if (!(handle->delay_ms) || !handle)
-        return LCD_ERR_INVALID_ARG;
+/**
+ * @brief Envia um byte em dois nibbles (mais significativo primeiro).
+ *
+ * @param handle Ponteiro (já validado) para a estrutura de controle do LCD.
+ * @param is_data 1 = dado (RS = 1); 0 = comando (RS = 0).
+ * @param value Byte a ser enviado.
+ */
+static void send_byte(const lcd16x2_handle_t *handle, uint8_t is_data, uint8_t value)
+{
+    handle->rs.write(is_data);
+
+    write_nibble(handle, value >> 4);
+    pulse_enable(handle);
+
+    write_nibble(handle, value & 0x0F);
+    pulse_enable(handle);
+
+    handle->delay_ms(1);
+}
+
+lcd16x2_err_t lcd16x2_init_4bits(const lcd16x2_handle_t *handle, void (*init_func)(void))
+{
+    lcd16x2_err_t err = validate_handle(handle);
+    if (err != LCD_OK)
+        return err;
+
+    if (init_func == NULL)
+        return LCD_ERR_NULL_CALLBACK;
 
     init_func();
 
@@ -36,10 +94,7 @@ lcd_err_t lcd16x2_init_4bits(const lcd16x2_handle_t *handle, void (*init_func)(v
     handle->rs.write(0);
 
     /* 0x3 */
-    handle->d4.write(1);
-    handle->d5.write(1);
-    handle->d6.write(0);
-    handle->d7.write(0);
+    write_nibble(handle, 0x3);
     pulse_enable(handle);
     handle->delay_ms(1);
 
@@ -52,73 +107,58 @@ lcd_err_t lcd16x2_init_4bits(const lcd16x2_handle_t *handle, void (*init_func)(v
     handle->delay_ms(1);
 
     /* 0x2 → 4 bits */
-    handle->d4.write(0);
-    handle->d5.write(1);
-    handle->d6.write(0);
-    handle->d7.write(0);
+    write_nibble(handle, 0x2);
     pulse_enable(handle);
     handle->delay_ms(1);
 
-    lcd16x2_send_cmd(handle, BITS_4 | LINES_2);
-    lcd16x2_send_cmd(handle, DISPLAY_OFF);
+    send_byte(handle, 0, BITS_4 | LINES_2);
+    send_byte(handle, 0, DISPLAY_OFF);
 
-    lcd16x2_send_cmd(handle, CLEAR_DISPLAY);
+    send_byte(handle, 0, CLEAR_DISPLAY);
     handle->delay_ms(1);
 
-    lcd16x2_send_cmd(handle, INCREMENT); // Entry mode set
+    send_byte(handle, 0, INCREMENT); // Entry mode set
 
-    lcd16x2_send_cmd(handle, DISPLAY_ON | BLINK_CURSOR);
+    send_byte(handle, 0, DISPLAY_ON | BLINK_CURSOR);
 
-    return 0;
+    return LCD_OK;
 }
 
-void lcd16x2_send_cmd(const lcd16x2_handle_t *handle, uint8_t cmd)
+lcd16x2_err_t lcd16x2_send_cmd(const lcd16x2_handle_t *handle, uint8_t cmd)
 {
+    lcd16x2_err_t err = validate_handle(handle);
+    if (err != LCD_OK)
+        return err;
+
     /* RS = 0 para comando */
-    handle->rs.write(0);
+    send_byte(handle, 0, cmd);
 
-    handle->d4.write((cmd >> 4) & 0x1);
-    handle->d5.write((cmd >> 5) & 0x1);
-    handle->d6.write((cmd >> 6) & 0x1);
-    handle->d7.write((cmd >> 7) & 0x1);
-
-    pulse_enable(handle);
-
-    handle->d4.write((cmd >> 0) & 0x1);
-    handle->d5.write((cmd >> 1) & 0x1);
-    handle->d6.write((cmd >> 2) & 0x1);
-    handle->d7.write((cmd >> 3) & 0x1);
-
-    pulse_enable(handle);
-
-    handle->delay_ms(1);
+    return LCD_OK;
 }
 
-void lcd16x2_send_data(const lcd16x2_handle_t *handle, uint8_t data)
+lcd16x2_err_t lcd16x2_send_data(const lcd16x2_handle_t *handle, uint8_t data)
 {
+    lcd16x2_err_t err = validate_handle(handle);
+    if (err != LCD_OK)
+        return err;
+
     /* RS = 1 para dado */
-    handle->rs.write(1);
+    send_byte(handle, 1, data);
 
-    handle->d4.write((data >> 4) & 0x1);
-    handle->d5.write((data >> 5) & 0x1);
-    handle->d6.write((data >> 6) & 0x1);
-    handle->d7.write((data >> 7) & 0x1);
-
-    pulse_enable(handle);
-
-    handle->d4.write((data >> 0) & 0x1);
-    handle->d5.write((data >> 1) & 0x1);
-    handle->d6.write((data >> 2) & 0x1);
-    handle->d7.write((data >> 3) & 0x1);
-
-    pulse_enable(handle);
-
-    handle->delay_ms(1); // pode reduzir depois
+    return LCD_OK;
 }
 
-void lcd16x2_write_string(const lcd16x2_handle_t *handle, const char *str, uint8_t size)
+lcd16x2_err_t lcd16x2_write_string(const lcd16x2_handle_t *handle, const char *str, uint8_t size)
 {
+    lcd16x2_err_t err = validate_handle(handle);
+    if (err != LCD_OK)
+        return err;
+
+    if (str == NULL)
+        return LCD_ERR_NULL_STRING;
 
     for (uint8_t idx = 0; idx < size; ++idx)
-        lcd16x2_send_data(handle, str[idx]);
+        send_byte(handle, 1, (uint8_t)str[idx]);
+
+    return LCD_OK;
 }
