@@ -52,8 +52,8 @@ void foc_clarke_transform(const foc_uvw_coord_t *uvw,
  * @param[in] ab Ponteiro para as componentes α e β.
  * @param[out] uvw Ponteiro para a estrutura que armazenará as componentes u, v e w.
  */
-void foc_inverse_clarke_trasform(const foc_ab_coord_t *ab,
-                                 foc_uvw_coord_t *uvw);
+void foc_inverse_clarke_transform(const foc_ab_coord_t *ab,
+                                  foc_uvw_coord_t *uvw);
 
 /**
  * @brief Realiza a transformação de Park.
