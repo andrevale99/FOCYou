@@ -2,6 +2,7 @@
 #define RCC_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 #include <stm32f411xe.h>
 
