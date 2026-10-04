@@ -183,9 +183,18 @@ static bool inverter_setup(void)
 
 /* ---------- LCD ---------- */
 
+static driver_err_t lcd_gpio_status = DRIVER_OK;
+
 static void lcd_gpio_init(void)
 {
-    (void)driver_lcd16x2_init();
+    lcd_gpio_status = driver_lcd16x2_init();
+}
+
+/* Falha irrecuperável do LCD: a task fica suspensa, o resto do sistema continua */
+static void lcd_halt(void)
+{
+    for (;;)
+        vTaskDelay(portMAX_DELAY);
 }
 
 static void lcd_delay_ms(uint32_t ms)
@@ -227,10 +236,13 @@ static int32_t counts_to_tenths_a(uint16_t raw)
     return ((int32_t)raw - CURRENT_OFFSET_COUNTS) * CURRENT_MA_PER_COUNT / 100;
 }
 
-static void lcd_write_line(uint8_t cmd_addr, const char *line)
+static lcd16x2_err_t lcd_write_line(uint8_t cmd_addr, const char *line)
 {
-    lcd16x2_send_cmd(&lcd, cmd_addr);
-    lcd16x2_write_string(&lcd, line, 16);
+    lcd16x2_err_t err = lcd16x2_send_cmd(&lcd, cmd_addr);
+    if (err != LCD_OK)
+        return err;
+
+    return lcd16x2_write_string(&lcd, line, 16);
 }
 
 /*
@@ -244,9 +256,9 @@ static void vLcdTask(void *pvParameters)
     char line1[17];
     char line2[17];
 
-    if (lcd16x2_init_4bits(&lcd, lcd_gpio_init) != LCD_OK)
-        for (;;)
-            vTaskDelay(portMAX_DELAY);
+    if (lcd16x2_init_4bits(&lcd, lcd_gpio_init) != LCD_OK ||
+        lcd_gpio_status != DRIVER_OK)
+        lcd_halt();
 
     TickType_t last_wake = xTaskGetTickCount();
 
@@ -281,11 +293,14 @@ static void vLcdTask(void *pvParameters)
         fmt_tenths(&line2[12], counts_to_tenths_a(d.raw_c));
         line2[16] = '\0';
 
-        lcd_write_line(SET_DDRAM | 0x00, line1);
-        lcd_write_line(SECOND_LINE, line2);
+        if (lcd_write_line(SET_DDRAM | 0x00, line1) != LCD_OK ||
+            lcd_write_line(SECOND_LINE, line2) != LCD_OK)
+            break;
 
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(LCD_UPDATE_MS));
     }
+
+    lcd_halt();
 }
 
 /* ---------- demais tasks ---------- */
