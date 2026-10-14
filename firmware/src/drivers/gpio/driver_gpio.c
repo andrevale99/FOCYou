@@ -30,7 +30,7 @@ driver_err_t driver_gpio_enable_clock(GPIO_TypeDef *gpiox)
 }
 
 driver_err_t driver_gpio_set_mode(GPIO_TypeDef *gpiox, uint16_t pin,
-                                       driver_gpio_moder_t mode)
+                                  driver_gpio_moder_t mode)
 {
     if (gpiox == NULL)
         return DRIVER_ERR_NO_GPIO;
@@ -50,7 +50,7 @@ driver_err_t driver_gpio_set_mode(GPIO_TypeDef *gpiox, uint16_t pin,
 }
 
 driver_err_t driver_gpio_set_output_type(GPIO_TypeDef *gpiox, uint16_t pin,
-                                              driver_gpio_otype_t type)
+                                         driver_gpio_otype_t type)
 {
     if (gpiox == NULL)
         return DRIVER_ERR_NO_GPIO;
@@ -68,7 +68,7 @@ driver_err_t driver_gpio_set_output_type(GPIO_TypeDef *gpiox, uint16_t pin,
 }
 
 driver_err_t driver_gpio_set_speed(GPIO_TypeDef *gpiox, uint16_t pin,
-                                        driver_gpio_speed_t speed)
+                                   driver_gpio_speed_t speed)
 {
     if (gpiox == NULL)
         return DRIVER_ERR_NO_GPIO;
@@ -88,7 +88,7 @@ driver_err_t driver_gpio_set_speed(GPIO_TypeDef *gpiox, uint16_t pin,
 }
 
 driver_err_t driver_gpio_set_pull(GPIO_TypeDef *gpiox, uint16_t pin,
-                                       driver_gpio_pull_t pull)
+                                  driver_gpio_pull_t pull)
 {
     if (gpiox == NULL)
         return DRIVER_ERR_NO_GPIO;
@@ -108,7 +108,7 @@ driver_err_t driver_gpio_set_pull(GPIO_TypeDef *gpiox, uint16_t pin,
 }
 
 driver_err_t driver_gpio_write_pin(GPIO_TypeDef *gpiox, uint16_t pin,
-                                        driver_gpio_pin_state_t state)
+                                   driver_gpio_pin_state_t state)
 {
     if (gpiox == NULL)
         return DRIVER_ERR_NO_GPIO;
@@ -128,6 +128,17 @@ driver_err_t driver_gpio_write_pin(GPIO_TypeDef *gpiox, uint16_t pin,
     return DRIVER_OK;
 }
 
+driver_gpio_pin_state_t driver_gpio_read_pin(GPIO_TypeDef *gpiox, uint16_t pin)
+{
+    if (gpiox == NULL)
+        return DRIVER_ERR_NO_GPIO;
+
+    if (pin > 15)
+        return DRIVER_ERR_INVALID_PIN;
+
+    return ((gpiox->IDR & (1 << pin)) ? DRIVER_GPIO_PIN_SET : DRIVER_GPIO_PIN_RESET);
+}
+
 driver_err_t driver_gpio_toggle_pin(GPIO_TypeDef *gpiox, uint16_t pin)
 {
     if (gpiox == NULL)
@@ -142,8 +153,8 @@ driver_err_t driver_gpio_toggle_pin(GPIO_TypeDef *gpiox, uint16_t pin)
 }
 
 driver_err_t driver_gpio_set_alternate_function(GPIO_TypeDef *gpiox,
-                                                     uint16_t pin,
-                                                     uint8_t alternate_mode)
+                                                uint16_t pin,
+                                                uint8_t alternate_mode)
 {
     if (gpiox == NULL)
         return DRIVER_ERR_NO_GPIO;

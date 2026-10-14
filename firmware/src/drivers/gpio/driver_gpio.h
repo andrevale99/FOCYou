@@ -136,6 +136,20 @@ driver_err_t driver_gpio_write_pin(GPIO_TypeDef *gpiox, uint16_t pin,
                                         driver_gpio_pin_state_t state);
 
 /**
+ * @brief Ler o nivel logico de um pino.
+ *
+ * @param gpiox Ponteiro para a porta GPIO.
+ * @param pin   Numero do pino (0 a 15).
+ *
+ * @retval DRIVER_GPIO_PIN_RESET    Nivel logico 0.
+ * @retval DRIVER_GPIO_PIN_SET      Nivel logico 1.
+ * 
+ * @note A leitura e feita no endereco IDR, suscetivel a escrita
+ * de interrupcoes ou tasks.
+ */
+driver_gpio_pin_state_t driver_gpio_read_pin(GPIO_TypeDef *gpiox, uint16_t pin);
+
+/**
  * @brief Troca o nivel do pino de saida
  *
  * @param gpiox Ponteiro para a porta GPIO.
