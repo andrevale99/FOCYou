@@ -10,7 +10,8 @@
  * - -10 a -19   GPIO
  * - -20 a -29   RCC
  * - -30 a -39   reservado (UART)
- * - -40 em diante: reservado para novos periféricos
+ * - -40 a -49   I2C
+ * - -50 em diante: reservado para novos periféricos
  */
 
 #ifndef DRIVER_ERR_H
@@ -40,6 +41,15 @@ typedef enum
     DRIVER_ERR_INVALID_PLL_P_FACTOR = -26,      /**< Fator de divisão P do PLL inválido. */
     DRIVER_ERR_INVALID_PLL_M_FACTOR = -27,      /**< Fator de divisão M do PLL inválido. */
     DRIVER_ERR_INVALID_PLL_N_FACTOR = -28,      /**< Fator de multiplicação N do PLL inválido. */
+
+    /* I2C */
+    DRIVER_ERR_I2C_TIMEOUT = -40,               /**< Flag esperado não setou dentro do timeout. */
+    DRIVER_ERR_I2C_NACK = -41,                  /**< Endereço ou dado sem ACK (flag AF). */
+    DRIVER_ERR_I2C_BUS_ERROR = -42,             /**< START/STOP fora de hora (flag BERR). */
+    DRIVER_ERR_I2C_ARLO = -43,                  /**< Perda de arbitragem (flag ARLO). */
+    DRIVER_ERR_I2C_BUSY = -44,                  /**< Barramento ocupado antes do START. */
+    DRIVER_ERR_I2C_INVALID_SPEED = -45,         /**< Velocidade ou clock do APB1 incompatíveis. */
+    DRIVER_ERR_I2C_NOT_INITIALIZED = -46,       /**< i2c_init() ainda não foi chamado. */
 } driver_err_t;
 
 #endif /* DRIVER_ERR_H */
