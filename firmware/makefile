@@ -12,6 +12,7 @@ FREERTOS = FreeRTOS/Source
 PORT     = $(FREERTOS)/portable/GCC/ARM_CM4F
 LIB     = lib
 DRIVERS = src/drivers
+INCLUDES = include/
 
 # diretórios que contêm .c ou .h dentro de lib/ e src/drivers/
 LIB_DIRS = $(sort $(dir $(wildcard $(LIB)/*/*.h $(LIB)/*/*.c)))
@@ -20,7 +21,8 @@ DRV_DIRS = $(sort $(dir $(wildcard $(DRIVERS)/*/*.h $(DRIVERS)/*/*.c)))
 INCS  = -I$(CMSIS)/Core/Include -I$(CMSIS)/Device/ST/STM32F4xx/Include -Isrc \
         -I$(FREERTOS)/include -I$(PORT) \
         -I$(LIB) -I$(DRIVERS) \
-        $(addprefix -I,$(LIB_DIRS)) $(addprefix -I,$(DRV_DIRS))
+        $(addprefix -I,$(LIB_DIRS)) $(addprefix -I,$(DRV_DIRS)) \
+		-Iinclude/
 
 CFLAGS  = $(CPU) $(DEFS) $(INCS) -O2 -g3 -Wall -ffunction-sections -fdata-sections -MMD -MP
 LDFLAGS = $(CPU) -TSTM32F411XE_FLASH.ld --specs=nano.specs --specs=nosys.specs \
