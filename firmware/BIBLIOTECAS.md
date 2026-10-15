@@ -15,11 +15,12 @@ firmware/
 │   ├── sixstep/          # lógica de comutação six-step (trapezoidal 120°)
 │   ├── foc/              # transformadas de Clarke e Park
 │   ├── pid/              # controlador PID com anti-windup
+│   ├── as5600/           # encoder magnético AS5600 (I2C)
 │   └── lcd16x2/          # display HD44780 em modo de 4 bits
 ├── src/
 │   ├── drivers/          # camada de acesso a registradores (HAL própria)
 │   │   ├── driver_err.h  # códigos de erro comuns
-│   │   ├── gpio/  rcc/  uart/  lcd/
+│   │   ├── gpio/  rcc/  uart/  i2c/  lcd/
 │   ├── main.c            # aplicação e tasks do FreeRTOS
 │   └── FreeRTOSConfig.h, startup, syscalls, system_stm32f4xx.c
 ├── makefile              # arm-none-eabi-gcc; alvos all, compile, flash, clean
@@ -166,6 +167,39 @@ O resultado fica em `pid.output`, na faixa [−saturation, +saturation]. No six-
 
 ---
 
+### `as5600`: encoder magnético AS5600
+
+**Uso:** leitura da posição e da velocidade do rotor, um dos blocos que faltavam para o six-step e o FOC.
+
+Sensor Hall de 12 bits (4096 contagens por volta), endereço I2C fixo **0x36**. Usa o driver `i2c`: a aplicação inicializa o barramento e passa o ponteiro do `i2c_t` na configuração, o que permite compartilhar o barramento. O sentido de contagem é definido pelo pino **DIR** do sensor (GND = cresce no sentido horário, VDD = anti-horário).
+
+| Item | Detalhe |
+|---|---|
+| Configuração | `i2c` (barramento já inicializado) e `delay_ms` (obrigatório só para os comandos de OTP) |
+| `init` | Só verifica o ACK em 0x36; não escreve nenhum registrador |
+| Erro de I2C | Volta como `AS5600_ERR_I2C`; o código do driver fica em `as5600_get_i2c_error` |
+
+**API**
+
+| Grupo | Funções |
+|---|---|
+| Ciclo de vida | `as5600_init`, `as5600_get_i2c_error` |
+| Ângulo | `as5600_read_raw_angle` (sem escala, indicado para controle de motor), `as5600_read_angle` (escala ZPOS..MPOS/MANG) |
+| Diagnóstico | `as5600_read_status` (MD/ML/MH), `as5600_check_magnet`, `as5600_read_agc`, `as5600_read_magnitude` |
+| Configuração (RAM) | `as5600_get_conf` / `as5600_set_conf` (PM, HYST, OUTS, PWMF, SF, FTH, WD), `as5600_get/set_zpos`, `_mpos`, `_mang` |
+| OTP (irreversível) | `as5600_get_burn_count` (ZMCO), `as5600_burn_angle` (ZPOS/MPOS, até 3 vezes), `as5600_burn_setting` (MANG/CONF, uma vez) |
+| Posição e velocidade | `as5600_update(h, dt_s)`, `as5600_reset_tracking`, `as5600_get_angle_rad`, `as5600_get_position_rad`, `as5600_get_turns`, `as5600_get_velocity_rad_s` |
+| Conversões | `as5600_counts_to_rad`, `as5600_counts_to_deg` (`static inline`) |
+
+Observações:
+- `as5600_update` lê o RAW ANGLE, conta as voltas pelo menor caminho entre duas leituras e calcula a velocidade sem filtro. O rotor precisa girar menos de meia volta entre chamadas (a 1 kHz, até 30.000 rpm). A resolução da velocidade a 1 kHz é de 1,53 rad/s, então convém filtrar na aplicação.
+- Os comandos de OTP conferem as pré-condições do datasheet (MD = 1 e ZMCO < 3 para o BURN_ANGLE; ZMCO = 0 para o BURN_SETTING), recarregam o OTP (0x01, 0x11, 0x10) e comparam com o valor escrito. Em 3,3 V, a gravação exige alimentação de 3,3 V a 3,5 V e 10 µF em VDD3V3.
+- Para o FOC, o ângulo elétrico é `pares_de_polos · ângulo_mecânico − offset`; o offset vem do alinhamento do rotor e ainda não está implementado.
+
+Erros: `AS5600_OK`, `ERR_INVALID_ARG`, `ERR_NOT_INITIALIZED`, `ERR_I2C`, `ERR_NOT_FOUND`, `ERR_NO_MAGNET`, `ERR_MAGNET_TOO_WEAK`, `ERR_MAGNET_TOO_STRONG`, `ERR_OUT_OF_RANGE`, `ERR_BURN_LIMIT`, `ERR_NO_DELAY`, `ERR_VERIFY`.
+
+---
+
 ### `lcd16x2`: display HD44780
 
 Driver de LCD 16x2 em modo de 4 bits, independente de hardware. O acesso aos pinos é feito por callbacks.
@@ -220,6 +254,6 @@ Ligação entre a biblioteca `lcd16x2` e o hardware: pinos D4 a D7, EN e RS em *
 
 1. **O `main.c` usa `inverter`, mas o hardware atual é o DRV8313.** Para o SimpleFOC Mini, a aplicação precisa trocar para `drv8313`: um timer com CH1 a CH3 nos IN1 a IN3, mais o EN. O break, o dead-time e os pinos complementares do `inverter` não se aplicam ao DRV8313, que já tem dead-time interno.
 2. **Não dá para deixar uma fase flutuando no SimpleFOC Mini.** O six-step clássico deixa uma fase em alta impedância a cada passo, mas na placa os três EN estão ligados juntos. O `sixstep` contorna isso deixando a fase desligada em 50%. Para uma fase flutuando de verdade, seria preciso separar os pinos EN1, EN2 e EN3 no hardware. Isso também afeta o BEMF sensorless, que precisa da fase flutuante.
-3. **Faltam blocos para o six-step**: a leitura da posição (sensores Hall ou encoder) e a medição de velocidade. A comutação (`sixstep`), a malha de velocidade (`pid`) e o driver de potência (`drv8313`) já existem, mas ainda não estão ligados no `main.c`.
+3. **Os blocos do six-step ainda não estão ligados no `main.c`**: a posição e a velocidade (`as5600`), a comutação (`sixstep`), a malha de velocidade (`pid`) e o driver de potência (`drv8313`) já existem. Com o `as5600`, o setor sai do ângulo elétrico (`pares_de_polos · ângulo − offset`, dividido em 6 faixas de 60°) em vez dos Hall.
 4. **Os pinos do exemplo do `drv8313.h` conflitam com o `main.c`.** O exemplo usa TIM3 em PA6/PA7/PB0, que no `main.c` são o BKIN e entradas do ADC. Os pinos precisam ser revistos quando o `drv8313` for integrado. O LCD também ocupa PA0 a PA5.
 5. **Clock:** o sistema roda no HSI de 16 MHz. Se o PLL for ligado via `rcc_init`, `timer_clock_hz` e as frequências de PWM e do ADC terão que ser recalculadas.
