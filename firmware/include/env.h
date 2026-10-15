@@ -1,13 +1,13 @@
 /**
- * @brief Defines de variaveis de ambientes
+ * @brief Defines de utilizados pelo projeto
  * 
  * @note São utilizadas para realizar as configurações 
- * iniciais dos perifericos/bibliotecas
+ * iniciais dos perifericos.
+ * 
+ * @warning Nao utilizar nas bibliotecas desenvolvidas (lib/)
  */
 
 #ifndef INCLUDE_H
 #define INCLUDE_H
-
-#define TESTE 0
 
 #endif
