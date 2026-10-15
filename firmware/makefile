@@ -53,8 +53,12 @@ flash: compile
 ifeq ($(FLASHER),openocd)
 	openocd -f interface/stlink.cfg -f target/stm32f4x.cfg \
 	        -c "program $(ELF) verify reset exit"
-else
+else ifeq ($(FLASHER),stlink)
 	st-flash --reset write $(BIN) 0x08000000
+else ifeq ($(FLASHER),dfu-util)
+	dfu-util -a 0 -D $(BIN) -s 0x08000000:leave
+else
+	$(error Gravador desconhecido: $(FLASHER))
 endif
 
 clean:
