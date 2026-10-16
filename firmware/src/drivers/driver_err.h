@@ -11,7 +11,8 @@
  * - -20 a -29   RCC
  * - -30 a -39   reservado (UART)
  * - -40 a -49   I2C
- * - -50 em diante: reservado para novos periféricos
+ * - -50 a -59   timers
+ * - -60 em diante: reservado para novos periféricos
  */
 
 #ifndef DRIVER_ERR_H
@@ -50,6 +51,10 @@ typedef enum
     DRIVER_ERR_I2C_BUSY = -44,                  /**< Barramento ocupado antes do START. */
     DRIVER_ERR_I2C_INVALID_SPEED = -45,         /**< Velocidade ou clock do APB1 incompatíveis. */
     DRIVER_ERR_I2C_NOT_INITIALIZED = -46,       /**< i2c_init() ainda não foi chamado. */
+
+    /* Timers */
+    DRIVER_ERR_TIM_OUT_OF_RANGE = -50,          /**< Período inatingível com o clock do timer. */
+    DRIVER_ERR_TIM_NOT_INITIALIZED = -51,       /**< Timer ainda não inicializado. */
 } driver_err_t;
 
 #endif /* DRIVER_ERR_H */
