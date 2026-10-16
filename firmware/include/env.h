@@ -82,8 +82,8 @@
 #define ENV_MOTOR_ALIGN_MS        500U        /* cada um dos 2 passos do alinhamento */
 #define ENV_MOTOR_START_RPM       60.0f
 #define ENV_MOTOR_RAMP_END_RPM    300.0f      /* fim da rampa: entra na malha fechada */
-#define ENV_MOTOR_TARGET_RPM      1200.0f
-#define ENV_MOTOR_MAX_RPM         1500.0f     /* < 30000 / período do AS5600 em ms (meia volta por amostra) */
+#define ENV_MOTOR_TARGET_RPM      2000.0f
+#define ENV_MOTOR_MAX_RPM         2500.0f     /* < 30000 / período do AS5600 em ms (meia volta por amostra) */
 #define ENV_MOTOR_RAMP_RPM_PER_S  300.0f
 #define ENV_MOTOR_U_OFFSET        0.10f
 #define ENV_MOTOR_U_PER_RPM       0.0002f
