@@ -3,16 +3,16 @@
 
 #include "task_as5600.h"
 
-/* Quantas leituras seguidas com erro equivalem a TASK_AS5600_ERROR_MS */
-#define ERROR_LOG_EVERY (TASK_AS5600_ERROR_MS / TASK_AS5600_PERIOD_MS)
-
 TaskHandle_t task_as5600_handle = NULL;
 
 static as5600_t enc;
 static i2c_t *bus;
 static task_as5600_log_t log_fn;
+static volatile task_as5600_sample_cb_t sample_cb;
+static uint32_t period_us;
 
 static volatile uint16_t raw_angle;
+static volatile float velocity_rad_s;
 static volatile bool ready;
 
 /* Configuração do encoder: sempre ligado e com resposta rápida para o controle */
@@ -149,8 +149,14 @@ static void vAs5600Task(void *pvParameters)
     encoder_configure();
 
     /* 3. Leitura a cada notificação do timer */
+    const float period_s = (float)period_us * 1e-6f;
+    uint32_t errors_per_log = (TASK_AS5600_ERROR_MS * 1000U) / period_us; /* leituras em ~1 s */
+    if (errors_per_log == 0U)
+        errors_per_log = 1U;
+
     uint32_t consecutive_errors = 0;
     bool timer_lost = false;
+    float dt_acc = 0.0f; /* tempo desde a última leitura bem-sucedida */
 
     /* Descarta as notificações acumuladas durante a detecção e a configuração */
     (void)ulTaskNotifyTake(pdTRUE, 0);
@@ -158,7 +164,8 @@ static void vAs5600Task(void *pvParameters)
     for (;;)
     {
         /* pdTRUE: notificações acumuladas (task atrasada) valem por uma leitura só */
-        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(TASK_AS5600_NOTIFY_TIMEOUT_MS)) == 0U)
+        const uint32_t ticks = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(TASK_AS5600_NOTIFY_TIMEOUT_MS));
+        if (ticks == 0U)
         {
             log_msg("sem notificacao do timer ha %u ms", (unsigned)TASK_AS5600_NOTIFY_TIMEOUT_MS);
             timer_lost = true;
@@ -171,11 +178,15 @@ static void vAs5600Task(void *pvParameters)
             timer_lost = false;
         }
 
-        uint16_t raw;
-        const as5600_err_t err = as5600_read_raw_angle(&enc, &raw);
+        dt_acc += (float)ticks * period_s;
+
+        /* Lê o RAW ANGLE e atualiza voltas e velocidade */
+        const as5600_err_t err = as5600_update(&enc, dt_acc);
 
         if (err == AS5600_OK)
         {
+            const uint16_t raw = as5600_get_raw(&enc);
+
             if (!ready)
                 log_msg("primeira leitura: raw = %u", raw);
             else if (consecutive_errors > 0U)
@@ -183,15 +194,22 @@ static void vAs5600Task(void *pvParameters)
 
             consecutive_errors = 0;
             raw_angle = raw;
+            velocity_rad_s = as5600_get_velocity_rad_s(&enc);
             ready = true;
-            
+
+            /* Avisa a malha de controle logo após a leitura */
+            const task_as5600_sample_cb_t cb = sample_cb;
+            if (cb != NULL)
+                cb(raw, velocity_rad_s, dt_acc);
+
+            dt_acc = 0.0f;
             continue;
         }
 
         const driver_err_t i2c_err = as5600_get_i2c_error(&enc);
 
         /* Loga o primeiro erro e depois um resumo a cada TASK_AS5600_ERROR_MS, para não inundar a UART */
-        if (consecutive_errors % ERROR_LOG_EVERY == 0U)
+        if (consecutive_errors % errors_per_log == 0U)
             log_msg("erro de leitura %d (I2C %d), %lu seguido(s)", err, i2c_err,
                     (unsigned long)(consecutive_errors + 1U));
         consecutive_errors++;
@@ -208,13 +226,15 @@ static void vAs5600Task(void *pvParameters)
 /* API                                                                 */
 /* ------------------------------------------------------------------ */
 
-BaseType_t task_as5600_create(i2c_t *i2c, task_as5600_log_t log)
+BaseType_t task_as5600_create(i2c_t *i2c, uint32_t period, task_as5600_log_t log)
 {
-    if (i2c == NULL)
+    if (i2c == NULL || period == 0U)
         return pdFAIL;
 
     bus = i2c;
+    period_us = period;
     log_fn = log;
+    velocity_rad_s = 0.0f;
     ready = false;
     raw_angle = 0;
 
@@ -232,6 +252,16 @@ void task_as5600_notify_from_isr(void *context)
     BaseType_t woken = pdFALSE;
     vTaskNotifyGiveFromISR(task_as5600_handle, &woken);
     portYIELD_FROM_ISR(woken);
+}
+
+void task_as5600_set_sample_callback(task_as5600_sample_cb_t cb)
+{
+    sample_cb = cb;
+}
+
+float task_as5600_get_velocity_rpm(void)
+{
+    return velocity_rad_s * (60.0f / 6.28318530718f);
 }
 
 uint16_t task_as5600_get_raw(void)
