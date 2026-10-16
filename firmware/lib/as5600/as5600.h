@@ -484,6 +484,13 @@ as5600_err_t as5600_reset_tracking(as5600_t *h);
 float as5600_get_angle_rad(const as5600_t *h);
 
 /**
+ * @brief RAW ANGLE da última atualização (as5600_update()).
+ * @param[in] h Handle do driver.
+ * @return Ângulo de 0 a 4095 (0 se @p h for NULL ou sem atualização).
+ */
+uint16_t as5600_get_raw(const as5600_t *h);
+
+/**
  * @brief Posição acumulada (voltas · 2π + ângulo).
  *
  * Em @c float, a resolução de 1 contagem se perde depois de ~2000 voltas;

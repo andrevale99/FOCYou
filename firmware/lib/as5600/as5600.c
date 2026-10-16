@@ -498,6 +498,11 @@ float as5600_get_angle_rad(const as5600_t *h)
     return (h == NULL) ? 0.0f : as5600_counts_to_rad(h->last_raw);
 }
 
+uint16_t as5600_get_raw(const as5600_t *h)
+{
+    return (h == NULL) ? 0U : h->last_raw;
+}
+
 float as5600_get_position_rad(const as5600_t *h)
 {
     if (h == NULL)
