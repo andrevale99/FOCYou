@@ -38,7 +38,7 @@
  */
 #define ENV_AS5600_TIM              TIM10
 #define ENV_AS5600_TIM_CLOCK_HZ     ENV_PCLK2_HZ /* APB2 sem prescaler: clock do timer = PCLK2 */
-#define ENV_AS5600_TIM_PERIOD_US    10000U       /* 10 ms */
+#define ENV_AS5600_TIM_PERIOD_US    1000U        /* 1 ms: amostra da malha de velocidade */
 #define ENV_AS5600_TIM_IRQ_PRIORITY 6U           /* >= configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY (5) */
 #define ENV_AS5600_TIM_IRQHandler   TIM1_UP_TIM10_IRQHandler /* compartilhado com o update do TIM1 */
 
@@ -73,20 +73,33 @@
 #define ENV_COMM_TIM_IRQHandler   TIM5_IRQHandler
 
 /*
- * ---------- Motor e partida em malha aberta ----------
+ * ---------- Motor e partida em rampa (malha aberta) ----------
  * Valores iniciais: ajuste para o seu motor (tensão alta demais aquece o
  * motor e aciona a proteção do DRV8313; baixa demais perde o sincronismo).
  */
 #define ENV_MOTOR_POLE_PAIRS      7U
 #define ENV_MOTOR_ALIGN_U         0.15f
-#define ENV_MOTOR_ALIGN_MS        500U
+#define ENV_MOTOR_ALIGN_MS        500U        /* cada um dos 2 passos do alinhamento */
 #define ENV_MOTOR_START_RPM       60.0f
-#define ENV_MOTOR_TARGET_RPM      600.0f
-#define ENV_MOTOR_MAX_RPM         1500.0f
+#define ENV_MOTOR_RAMP_END_RPM    300.0f      /* fim da rampa: entra na malha fechada */
+#define ENV_MOTOR_TARGET_RPM      1200.0f
+#define ENV_MOTOR_MAX_RPM         1500.0f     /* < 30000 / período do AS5600 em ms (meia volta por amostra) */
 #define ENV_MOTOR_RAMP_RPM_PER_S  300.0f
 #define ENV_MOTOR_U_OFFSET        0.10f
 #define ENV_MOTOR_U_PER_RPM       0.0002f
 #define ENV_MOTOR_U_MAX           0.50f
 #define ENV_MOTOR_AUTOSTART       1           /* 1: parte sozinho ao ligar */
+
+/*
+ * ---------- Controle de velocidade (PID + AS5600) ----------
+ * Ganhos em unidades de tensão normalizada: com KP = 0,0005, um erro de
+ * 100 rpm soma 0,05 à tensão. Comece só com KP e KI e aumente aos poucos.
+ */
+#define ENV_MOTOR_CLOSED_LOOP     1           /* 0: fica em malha aberta após a rampa */
+#define ENV_MOTOR_KP              0.5f
+#define ENV_MOTOR_KI              0.02f
+#define ENV_MOTOR_KD              0.0f
+#define ENV_MOTOR_SPEED_FILTER_MS 5.0f        /* filtro da velocidade medida (resolução de ~15 rpm a 1 kHz) */
+#define ENV_MOTOR_COMM_RATE_HZ    10000U      /* ISR de comutação na malha fechada */
 
 #endif
