@@ -32,6 +32,7 @@ extern uint32_t SystemCoreClock;
 #define INCLUDE_vTaskDelay                       1
 #define INCLUDE_vTaskDelayUntil                  1
 #define INCLUDE_vTaskDelete                      1
+#define INCLUDE_xTaskGetSchedulerState           1
 
 /* Liga os handlers do FreeRTOS aos nomes da tabela de vetores do startup */
 #define vPortSVCHandler     SVC_Handler

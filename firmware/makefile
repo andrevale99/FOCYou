@@ -15,7 +15,7 @@ DRIVERS = src/drivers
 INCLUDES = include/
 
 # diretórios que contêm .c ou .h dentro de lib/ e src/drivers/
-LIB_DIRS = $(sort $(dir $(wildcard $(LIB)/*/*.h $(LIB)/*/*.c)))
+LIB_DIRS = $(sort $(dir $(wildcard $(LIB)/*/*.h $(LIB)/*/*.c $(LIB)/*/*/*.h $(LIB)/*/*/*.c)))
 DRV_DIRS = $(sort $(dir $(wildcard $(DRIVERS)/*/*.h $(DRIVERS)/*/*.c)))
 
 INCS  = -I$(CMSIS)/Core/Include -I$(CMSIS)/Device/ST/STM32F4xx/Include -Isrc \
@@ -30,6 +30,7 @@ LDFLAGS = $(CPU) -TSTM32F411XE_FLASH.ld --specs=nano.specs --specs=nosys.specs \
 
 SRCS = $(wildcard src/*.c) \
        $(wildcard $(LIB)/*/*.c) \
+       $(wildcard $(LIB)/*/*/*.c) \
        $(wildcard $(DRIVERS)/*/*.c) \
        $(wildcard $(FREERTOS)/*.c) \
        $(PORT)/port.c \
