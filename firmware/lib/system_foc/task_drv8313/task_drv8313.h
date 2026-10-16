@@ -3,33 +3,37 @@
  * @brief Task do FreeRTOS que controla o motor BLDC por six-step com o DRV8313.
  *
  * Divisão do trabalho:
- * - **ISR de comutação** (timer gptim, registrado pela aplicação): a cada
- *   interrupção avança um setor e aplica os duty cycles. Precisa ser precisa,
- *   por isso não fica na task (o tick do FreeRTOS é de 1 ms).
- * - **Task**: máquina de estados, rampa de velocidade, ajuste do período de
- *   comutação, verificação do nFAULT e comandos vindos de outras tasks.
+ * - **ISR de comutação** (timer gptim, registrado pela aplicação): escolhe o
+ *   setor e aplica os duty cycles.
+ *   - malha aberta: avança um setor a cada interrupção (o período define a velocidade);
+ *   - malha fechada: roda a taxa fixa (@c comm_rate_hz), estima o ângulo elétrico
+ *     entre as amostras do encoder (ângulo + velocidade · tempo) e aplica o setor
+ *     90° elétricos à frente do rotor.
+ * - **Task**: máquina de estados, rampa, PID de velocidade, nFAULT e comandos.
+ *   Na malha fechada ela dorme até a notificação de amostra nova do encoder
+ *   (task_drv8313_encoder_sample()), então o PID roda logo após cada leitura.
  *
  * Máquina de estados:
  *
- *     IDLE --start--> ALIGN --align_ms--> RAMP --rpm = alvo--> RUN
- *       ^               |                  |                    |
- *       +----stop-------+------------------+--------------------+
- *     (nFAULT ativo em qualquer estado ligado -> FAULT; clear_fault -> IDLE)
+ *     IDLE --start--> ALIGN --2 · align_ms--> RAMP --rpm = fim da rampa--> RUN
+ *       ^                                                                   |
+ *       +---------------------------- stop ---------------------------------+
+ *     (nFAULT ativo, erro do driver ou encoder parado -> FAULT; clear_fault -> IDLE)
  *
- * - ALIGN: aplica o setor 0 com @c align_u por @c align_ms para posicionar o rotor.
- * - RAMP:  malha aberta; a velocidade sobe de @c start_rpm até o alvo a
- *          @c ramp_rpm_per_s, com tensão u = u_offset + u_per_rpm · rpm (V/f).
- * - RUN:   segue em malha aberta na velocidade alvo; mudanças de alvo usam a
- *          mesma rampa. A malha fechada (com o AS5600) entra aqui no futuro.
+ * - ALIGN: alinha o rotor no setor 0 e depois no setor 1. Com o encoder, as duas
+ *          leituras dão o zero elétrico e o sentido de contagem (calibração).
+ * - RAMP:  partida em malha aberta de @c start_rpm até @c ramp_end_rpm, com
+ *          tensão u = u_offset + u_per_rpm · rpm (V/f).
+ * - RUN:   com @c closed_loop e calibração válida, malha fechada: o PID ajusta a
+ *          tensão para seguir o alvo (com a mesma rampa no setpoint). Sem encoder,
+ *          continua em malha aberta seguindo o alvo, como na rampa.
  *
  * Uso:
  * @code
- * static drv8313_t drv;
- * static gptim_t comm_tim;
- *
  * drv8313_init(&drv, &drv_cfg);
  * gptim_init(&comm_tim, &tim_cfg);   // .callback = task_drv8313_commutate_from_isr, parado
  * task_drv8313_create(&drv, &comm_tim, &motor_cfg, log_write);
+ * task_as5600_set_sample_callback(task_drv8313_encoder_sample);
  * task_drv8313_start();
  * vTaskStartScheduler();
  * @endcode
@@ -46,12 +50,23 @@
 #include "task.h"
 
 #include "drv8313.h"
+#include "pid.h"
 #include "sixstep.h"
 #include "drivers/gptim/gptim.h"
 
-/** @brief Período da task (rampa, nFAULT e comandos), em ms. */
+/** @brief Período da task fora da malha fechada (alinhamento e rampa), em ms. */
 #ifndef TASK_DRV8313_PERIOD_MS
 #define TASK_DRV8313_PERIOD_MS 1U
+#endif
+
+/** @brief Tempo máximo sem amostra do encoder na malha fechada, em ms (excedido = FAULT). */
+#ifndef TASK_DRV8313_ENCODER_TIMEOUT_MS
+#define TASK_DRV8313_ENCODER_TIMEOUT_MS 20U
+#endif
+
+/** @brief Intervalo do log de estado na malha fechada, em ms (0 desativa). */
+#ifndef TASK_DRV8313_STATUS_MS
+#define TASK_DRV8313_STATUS_MS 1000U
 #endif
 
 /** @brief Tamanho da stack da task, em words (o vsnprintf dos logs precisa de folga). */
@@ -59,7 +74,7 @@
 #define TASK_DRV8313_STACK_SIZE (configMINIMAL_STACK_SIZE * 4)
 #endif
 
-/** @brief Prioridade da task (acima da task do encoder). */
+/** @brief Prioridade da task (acima da task do encoder, para rodar logo após a amostra). */
 #ifndef TASK_DRV8313_PRIORITY
 #define TASK_DRV8313_PRIORITY 3
 #endif
@@ -73,29 +88,41 @@
 typedef enum
 {
     TASK_DRV8313_STATE_IDLE = 0, /**< Saídas desligadas, esperando task_drv8313_start(). */
-    TASK_DRV8313_STATE_ALIGN,    /**< Alinhando o rotor no setor 0. */
-    TASK_DRV8313_STATE_RAMP,     /**< Partida em malha aberta, acelerando até o alvo. */
-    TASK_DRV8313_STATE_RUN,      /**< Na velocidade alvo (malha aberta por enquanto). */
-    TASK_DRV8313_STATE_FAULT,    /**< nFAULT ativo ou erro do driver; saídas desligadas. */
+    TASK_DRV8313_STATE_ALIGN,    /**< Alinhando o rotor (e calibrando o encoder). */
+    TASK_DRV8313_STATE_RAMP,     /**< Partida em malha aberta. */
+    TASK_DRV8313_STATE_RUN,      /**< Em operação (malha fechada ou aberta). */
+    TASK_DRV8313_STATE_FAULT,    /**< Falha; saídas desligadas. */
 } task_drv8313_state_t;
 
-/** @brief Parâmetros do motor e da partida em malha aberta. */
+/** @brief Parâmetros do motor, da partida e do controle de velocidade. */
 typedef struct
 {
-    uint8_t pole_pairs;    /**< Pares de polos do motor (polos / 2). */
+    uint8_t pole_pairs;      /**< Pares de polos do motor (polos / 2). */
     sixstep_dir_t direction; /**< Sentido de giro. */
 
-    float align_u;         /**< Tensão normalizada do alinhamento (0.0 a 1.0). */
-    uint32_t align_ms;     /**< Duração do alinhamento, em ms. */
+    /* Alinhamento */
+    float align_u;     /**< Tensão normalizada do alinhamento (0.0 a 1.0). */
+    uint32_t align_ms; /**< Duração de cada um dos dois passos do alinhamento, em ms. */
 
-    float start_rpm;       /**< Velocidade mecânica no início da rampa (> 0). */
-    float target_rpm;      /**< Velocidade alvo inicial (>= start_rpm). */
-    float max_rpm;         /**< Limite para task_drv8313_set_target_rpm(). */
-    float ramp_rpm_per_s;  /**< Aceleração da rampa, em rpm/s (> 0). */
+    /* Partida em rampa (malha aberta) */
+    float start_rpm;      /**< Velocidade no início da rampa (> 0). */
+    float ramp_end_rpm;   /**< Fim da rampa: passagem para a malha fechada (>= start_rpm). */
+    float ramp_rpm_per_s; /**< Aceleração da rampa e do setpoint, em rpm/s (> 0). */
+    float u_offset;       /**< V/f: tensão com rpm = 0 (vence a resistência do enrolamento). */
+    float u_per_rpm;      /**< V/f: ganho de tensão por rpm; também é o feedforward do PID. */
+    float u_max;          /**< Limite da tensão normalizada (0.0 a 1.0). */
 
-    float u_offset;        /**< V/f: tensão com rpm = 0 (vence a resistência do enrolamento). */
-    float u_per_rpm;       /**< V/f: ganho de tensão por rpm (acompanha a BEMF). */
-    float u_max;           /**< Limite da tensão normalizada (0.0 a 1.0). */
+    /* Velocidade */
+    float target_rpm; /**< Velocidade alvo inicial (start_rpm a max_rpm). */
+    float max_rpm;    /**< Limite para task_drv8313_set_target_rpm(). */
+
+    /* Malha fechada */
+    bool closed_loop;      /**< true: usa o encoder e o PID depois da rampa. */
+    float kp;              /**< Ganho proporcional, em u por rpm. */
+    float ki;              /**< Ganho integral, em u por (rpm · s). */
+    float kd;              /**< Ganho derivativo, em u por (rpm / s). */
+    float speed_filter_ms; /**< Constante de tempo do filtro passa-baixa da velocidade medida (0 = sem filtro). */
+    uint32_t comm_rate_hz; /**< Taxa da ISR de comutação na malha fechada (ex.: 10000). */
 } task_drv8313_motor_cfg_t;
 
 /**
@@ -106,7 +133,7 @@ typedef struct
  */
 typedef void (*task_drv8313_log_t)(const char *msg);
 
-/** @brief Handle da task (recebe os comandos por task notify). */
+/** @brief Handle da task (recebe comandos e amostras do encoder por task notify). */
 extern TaskHandle_t task_drv8313_handle;
 
 /**
@@ -127,7 +154,7 @@ BaseType_t task_drv8313_create(drv8313_t *drv, gptim_t *tim,
                                task_drv8313_log_t log);
 
 /**
- * @brief Pede a partida (alinhamento + rampa). Só tem efeito em IDLE.
+ * @brief Pede a partida (alinhamento + rampa + malha fechada). Só tem efeito em IDLE.
  * @retval pdPASS Comando enviado.
  * @retval pdFAIL A task não foi criada.
  */
@@ -148,11 +175,19 @@ BaseType_t task_drv8313_stop(void);
 BaseType_t task_drv8313_clear_fault(void);
 
 /**
- * @brief Muda a velocidade alvo; em RUN, a velocidade segue a rampa até o novo valor.
+ * @brief Muda a velocidade alvo; o setpoint segue a rampa até o novo valor.
  * @param[in] rpm Nova velocidade, saturada entre @c start_rpm e @c max_rpm.
  * @return Velocidade alvo efetivamente aplicada.
  */
 float task_drv8313_set_target_rpm(float rpm);
+
+/**
+ * @brief Muda os ganhos do PID (vale na próxima amostra; útil para sintonia).
+ * @param[in] kp Ganho proporcional, em u por rpm.
+ * @param[in] ki Ganho integral, em u por (rpm · s).
+ * @param[in] kd Ganho derivativo, em u por (rpm / s).
+ */
+void task_drv8313_set_pid_gains(float kp, float ki, float kd);
 
 /**
  * @brief Muda o sentido de giro. Só aceito em IDLE.
@@ -167,8 +202,14 @@ task_drv8313_state_t task_drv8313_get_state(void);
 /** @brief Nome do estado (para logs). */
 const char *task_drv8313_state_str(task_drv8313_state_t state);
 
-/** @brief Velocidade comandada atual, em rpm (0 fora de RAMP/RUN). */
+/** @brief true se o motor está em RUN com a malha fechada ativa. */
+bool task_drv8313_is_closed_loop(void);
+
+/** @brief Setpoint atual (com rampa) em rpm; na malha aberta, a velocidade comandada. */
 float task_drv8313_get_rpm(void);
+
+/** @brief Velocidade medida pelo encoder, filtrada, em rpm (positiva no sentido comandado). */
+float task_drv8313_get_speed_rpm(void);
 
 /** @brief Velocidade alvo, em rpm. */
 float task_drv8313_get_target_rpm(void);
@@ -177,7 +218,19 @@ float task_drv8313_get_target_rpm(void);
 float task_drv8313_get_u(void);
 
 /**
- * @brief Avança um setor e aplica os duty cycles; registre como callback do timer de comutação.
+ * @brief Recebe uma amostra do encoder; registre com task_as5600_set_sample_callback().
+ *
+ * Roda no contexto da task do encoder: guarda a amostra, atualiza o ângulo usado
+ * pela ISR de comutação e, na malha fechada, notifica a task do motor.
+ *
+ * @param raw            RAW ANGLE, de 0 a 4095.
+ * @param velocity_rad_s Velocidade mecânica, em rad/s (positiva quando o RAW ANGLE cresce).
+ * @param dt_s           Tempo desde a amostra anterior, em s.
+ */
+void task_drv8313_encoder_sample(uint16_t raw, float velocity_rad_s, float dt_s);
+
+/**
+ * @brief Escolhe o setor e aplica os duty cycles; registre como callback do timer de comutação.
  *
  * Tem a assinatura de gptim_callback_t. Não usa a API do FreeRTOS, então o timer
  * pode ter prioridade acima de configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY
