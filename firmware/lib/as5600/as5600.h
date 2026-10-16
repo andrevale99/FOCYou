@@ -7,7 +7,8 @@
  * guarda o ponteiro para o handle.
  *
  * Características do sensor (datasheet ams AS5600 v1-00):
- * - endereço I2C fixo 0x36, até 1 MHz (o driver I2C vai até 400 kHz);
+ * - endereço I2C 0x36 (AS5600) ou 0x40 (padrão do AS5600L), escolhido em
+ *   as5600_config_t::address; até 1 MHz (o driver I2C vai até 400 kHz);
  * - sem clock stretching;
  * - 4096 contagens por volta; o sentido de contagem é definido pelo pino DIR
  *   (GND = cresce no sentido horário, VDD = anti-horário);
@@ -49,8 +50,15 @@
 #include "drivers/driver_err.h"
 #include "drivers/i2c/i2c.h"
 
-/** @brief Endereço I2C de 7 bits (fixo). */
+/** @brief Endereço I2C de 7 bits do AS5600 (fixo). */
 #define AS5600_I2C_ADDR 0x36U
+
+/**
+ * @brief Endereço I2C de 7 bits padrão do AS5600L.
+ * @note O mapa de leitura é o mesmo do AS5600; os comandos de OTP não foram
+ *       validados com o AS5600L.
+ */
+#define AS5600L_I2C_ADDR 0x40U
 
 /** @brief Contagens por volta (12 bits). */
 #define AS5600_COUNTS_PER_REV 4096U
@@ -92,7 +100,7 @@ typedef enum
     AS5600_ERR_INVALID_ARG = -1,       /**< Ponteiro NULL ou parâmetro inválido. */
     AS5600_ERR_NOT_INITIALIZED = -2,   /**< as5600_init() ainda não foi chamado. */
     AS5600_ERR_I2C = -3,               /**< Falha no barramento; detalhe em as5600_get_i2c_error(). */
-    AS5600_ERR_NOT_FOUND = -4,         /**< Nenhum ACK no endereço 0x36. */
+    AS5600_ERR_NOT_FOUND = -4,         /**< Nenhum ACK no endereço configurado. */
     AS5600_ERR_NO_MAGNET = -5,         /**< Ímã não detectado (MD = 0). */
     AS5600_ERR_MAGNET_TOO_WEAK = -6,   /**< AGC no ganho máximo (ML = 1): aproxime o ímã. */
     AS5600_ERR_MAGNET_TOO_STRONG = -7, /**< AGC no ganho mínimo (MH = 1): afaste o ímã. */
@@ -183,6 +191,7 @@ typedef struct
 typedef struct
 {
     i2c_t *i2c;                 /**< Barramento já inicializado com i2c_init(). */
+    uint8_t address;            /**< Endereço de 7 bits (0 = #AS5600_I2C_ADDR). */
     void (*delay_ms)(uint32_t); /**< Atraso em ms; obrigatório só para os comandos de OTP. */
 } as5600_config_t;
 
@@ -218,7 +227,7 @@ typedef struct
  *
  * @retval AS5600_OK             Sucesso.
  * @retval AS5600_ERR_INVALID_ARG NULL em @p h, @p cfg ou @c cfg->i2c.
- * @retval AS5600_ERR_NOT_FOUND  Sem ACK no endereço 0x36.
+ * @retval AS5600_ERR_NOT_FOUND  Sem ACK no endereço configurado.
  * @retval AS5600_ERR_I2C        Outra falha no barramento.
  */
 as5600_err_t as5600_init(as5600_t *h, const as5600_config_t *cfg);

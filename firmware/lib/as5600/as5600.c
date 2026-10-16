@@ -34,12 +34,12 @@ static as5600_err_t from_i2c(as5600_t *h, driver_err_t err)
 
 static as5600_err_t read_regs(as5600_t *h, uint8_t reg, uint8_t *buf, uint16_t len)
 {
-    return from_i2c(h, i2c_mem_read(h->cfg.i2c, AS5600_I2C_ADDR, reg, 1U, buf, len));
+    return from_i2c(h, i2c_mem_read(h->cfg.i2c, h->cfg.address, reg, 1U, buf, len));
 }
 
 static as5600_err_t write_regs(as5600_t *h, uint8_t reg, const uint8_t *buf, uint16_t len)
 {
-    return from_i2c(h, i2c_mem_write(h->cfg.i2c, AS5600_I2C_ADDR, reg, 1U, buf, len));
+    return from_i2c(h, i2c_mem_write(h->cfg.i2c, h->cfg.address, reg, 1U, buf, len));
 }
 
 static as5600_err_t read_u8(as5600_t *h, uint8_t reg, uint8_t *value)
@@ -175,11 +175,13 @@ as5600_err_t as5600_init(as5600_t *h, const as5600_config_t *cfg)
         return AS5600_ERR_INVALID_ARG;
 
     h->cfg = *cfg;
+    if (h->cfg.address == 0U)
+        h->cfg.address = AS5600_I2C_ADDR;
     h->i2c_err = DRIVER_OK;
     h->initialized = false;
     (void)as5600_reset_tracking(h);
 
-    const driver_err_t err = i2c_is_device_ready(cfg->i2c, AS5600_I2C_ADDR, 3U);
+    const driver_err_t err = i2c_is_device_ready(cfg->i2c, h->cfg.address, 3U);
     h->i2c_err = err;
     if (err == DRIVER_ERR_I2C_NACK)
         return AS5600_ERR_NOT_FOUND;
