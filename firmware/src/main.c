@@ -147,12 +147,19 @@ static BaseType_t motor_task_setup(void)
         .align_u = ENV_MOTOR_ALIGN_U,
         .align_ms = ENV_MOTOR_ALIGN_MS,
         .start_rpm = ENV_MOTOR_START_RPM,
-        .target_rpm = ENV_MOTOR_TARGET_RPM,
-        .max_rpm = ENV_MOTOR_MAX_RPM,
+        .ramp_end_rpm = ENV_MOTOR_RAMP_END_RPM,
         .ramp_rpm_per_s = ENV_MOTOR_RAMP_RPM_PER_S,
         .u_offset = ENV_MOTOR_U_OFFSET,
         .u_per_rpm = ENV_MOTOR_U_PER_RPM,
         .u_max = ENV_MOTOR_U_MAX,
+        .target_rpm = ENV_MOTOR_TARGET_RPM,
+        .max_rpm = ENV_MOTOR_MAX_RPM,
+        .closed_loop = ENV_MOTOR_CLOSED_LOOP,
+        .kp = ENV_MOTOR_KP,
+        .ki = ENV_MOTOR_KI,
+        .kd = ENV_MOTOR_KD,
+        .speed_filter_ms = ENV_MOTOR_SPEED_FILTER_MS,
+        .comm_rate_hz = ENV_MOTOR_COMM_RATE_HZ,
     };
 
     return task_drv8313_create(&drv, &comm_tim, &motor, log_write);
@@ -182,7 +189,7 @@ int main(void)
 
     log_write("[main] I2C ok\r\n");
 
-    if (task_as5600_create(&i2c, log_write) != pdPASS)
+    if (task_as5600_create(&i2c, ENV_AS5600_TIM_PERIOD_US, log_write) != pdPASS)
     {
         log_write("[main] falha ao criar a task do AS5600\r\n");
         init_error();
@@ -215,6 +222,9 @@ int main(void)
         log_write("[main] falha ao criar a task do motor\r\n");
         init_error();
     }
+
+    /* Cada amostra do encoder acorda a task do motor (PID logo após a leitura) */
+    task_as5600_set_sample_callback(task_drv8313_encoder_sample);
 
     log_write("[main] DRV8313 ok\r\n");
 
