@@ -469,6 +469,22 @@ as5600_err_t as5600_burn_setting(as5600_t *h);
 as5600_err_t as5600_update(as5600_t *h, float dt_s);
 
 /**
+ * @brief Atualiza voltas, posição e velocidade com um ângulo já lido.
+ *
+ * É o mesmo cálculo de as5600_update(), sem a leitura por I2C: serve para o
+ * ângulo vindo de outra fonte, como a saída analógica (OUT) lida pelo ADC.
+ * Não exige as5600_init() (o handle pode estar zerado).
+ *
+ * @param[in,out] h    Handle (inicializado ou não).
+ * @param[in]     raw  Ângulo de 0 a 4095.
+ * @param[in]     dt_s Tempo desde a última chamada, em s (<= 0 mantém a velocidade anterior).
+ * @retval AS5600_OK               Sucesso.
+ * @retval AS5600_ERR_INVALID_ARG  @p h é NULL.
+ * @retval AS5600_ERR_OUT_OF_RANGE @p raw acima de 12 bits; o estado não muda.
+ */
+as5600_err_t as5600_track_raw(as5600_t *h, uint16_t raw, float dt_s);
+
+/**
  * @brief Zera as voltas e a velocidade; a próxima as5600_update() reinicia o acompanhamento.
  * @param[in,out] h Handle do driver.
  * @retval AS5600_OK              Sucesso.
@@ -484,7 +500,7 @@ as5600_err_t as5600_reset_tracking(as5600_t *h);
 float as5600_get_angle_rad(const as5600_t *h);
 
 /**
- * @brief RAW ANGLE da última atualização (as5600_update()).
+ * @brief RAW ANGLE da última atualização (as5600_update() ou as5600_track_raw()).
  * @param[in] h Handle do driver.
  * @return Ângulo de 0 a 4095 (0 se @p h for NULL ou sem atualização).
  */

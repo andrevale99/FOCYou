@@ -449,6 +449,16 @@ as5600_err_t as5600_update(as5600_t *h, float dt_s)
     if (err != AS5600_OK)
         return err;
 
+    return as5600_track_raw(h, raw, dt_s);
+}
+
+as5600_err_t as5600_track_raw(as5600_t *h, uint16_t raw, float dt_s)
+{
+    if (h == NULL)
+        return AS5600_ERR_INVALID_ARG;
+    if (raw > AS5600_MAX_COUNT)
+        return AS5600_ERR_OUT_OF_RANGE;
+
     if (!h->tracking)
     {
         h->last_raw = raw;
