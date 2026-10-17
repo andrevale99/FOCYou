@@ -5,9 +5,10 @@
 #include "stm32f4xx.h"
 #include "FreeRTOS.h"
 #include "task.h"
-#include "semphr.h"
 
+#include "drivers/adc/adc.h"
 #include "drivers/i2c/i2c.h"
+#include "drivers/rcc/rcc.h"
 #include "drivers/gptim/gptim.h"
 #include "drivers/uart/uart.h"
 
@@ -15,29 +16,58 @@
 
 #include "task_as5600.h"
 #include "task_drv8313.h"
+#include "task_logger.h"
 
 static i2c_t i2c;
+static adc_t adc;
+static uint8_t as5600_adc_channel;
 static gptim_t as5600_tim;
 static drv8313_t drv;
 static gptim_t comm_tim;
-static SemaphoreHandle_t log_mutex;
 
 /*
- * Log compartilhado entre as tasks: o mutex evita que duas mensagens se
- * misturem na UART. Antes do scheduler (ou sem mutex) escreve direto.
+ * Logs de texto de todas as tasks: passam pelo logger, que põe "# " em cada
+ * linha (o pandas ignora com comment="#") e os intercala com o CSV.
  */
 static void log_write(const char *msg)
 {
-    const bool use_mutex = (log_mutex != NULL) &&
-                           (xTaskGetSchedulerState() == taskSCHEDULER_RUNNING);
+    task_logger_write(msg);
+}
 
-    if (use_mutex)
-        xSemaphoreTake(log_mutex, portMAX_DELAY);
+/* ---------- CSV de 1 ms ---------- */
 
-    uart_send_string(ENV_UART, msg);
+#define LOG_HEADER "pwm_a,pwm_b,pwm_c,setor,pos,pos_unwrap,vel_rpm_x10"
+#define LOG_COLUMNS 7U
 
-    if (use_mutex)
-        xSemaphoreGive(log_mutex);
+/* Uma linha do CSV (o t_us é posto pelo logger) */
+static void log_sample(int32_t *v)
+{
+    uint16_t raw;
+    int32_t pos;
+    task_as5600_get_sample(&raw, &pos);
+
+    const float vel = task_drv8313_get_speed_rpm() * 10.0f;
+
+    v[0] = (int32_t)ENV_DRV_TIM->CCR1; /* duty das fases, de 0 ao ARR do PWM */
+    v[1] = (int32_t)ENV_DRV_TIM->CCR2;
+    v[2] = (int32_t)ENV_DRV_TIM->CCR3;
+    v[3] = task_drv8313_get_sector();
+    v[4] = raw;                        /* 0 a 4095 */
+    v[5] = pos;                        /* voltas · 4096 + ângulo */
+    v[6] = (int32_t)(vel + ((vel >= 0.0f) ? 0.5f : -0.5f));
+}
+
+static BaseType_t logger_setup(void)
+{
+    const task_logger_config_t cfg = {
+        .usart = ENV_UART,
+        .header = LOG_HEADER,
+        .n_columns = LOG_COLUMNS,
+        .sample = log_sample,
+        .period_ms = ENV_LOG_PERIOD_MS,
+    };
+
+    return task_logger_create(&cfg);
 }
 
 /* Falha de inicialização: para aqui (dá para ver com o debugger) */
@@ -46,6 +76,30 @@ static void init_error(void)
     for (;;)
     {
     }
+}
+
+/* SYSCLK de 50 MHz pelo PLL; os periféricos usam os clocks do env.h */
+static driver_err_t clock_setup(void)
+{
+    rcc_config_t cfg = {
+        .clock_source = RCC_PLL,
+        .pll_conf = {
+            .source = RCC_HSE,
+            .m_factor = ENV_PLL_M,
+            .n_factor = ENV_PLL_N,
+            .p_factor = ENV_PLL_P,
+        },
+        .ahb_divider = RCC_AHB_DIV_0,
+        .apb1_divider = RCC_APBx_DIV_0,
+        .apb2_divider = RCC_APBx_DIV_0,
+    };
+
+    const driver_err_t err = rcc_init(&cfg);
+    if (err != DRIVER_OK)
+        return err;
+
+    /* Confere com o env.h: os periféricos foram calculados para ENV_SYSCLK_HZ */
+    return (SystemCoreClock == ENV_SYSCLK_HZ) ? DRIVER_OK : DRIVER_ERR_INVALID_CLOCK_SOURCE;
 }
 
 static driver_err_t uart_setup(void)
@@ -75,6 +129,51 @@ static driver_err_t i2c_setup(void)
     };
 
     return i2c_init(&i2c, &cfg);
+}
+
+#if ENV_AS5600_USE_ADC
+/* ADC1 com o pino OUT do AS5600 em modo analógico */
+static driver_err_t adc_setup(void)
+{
+    const adc_config_t cfg = {
+        .adc = ADC1,
+        .pclk2_hz = ENV_PCLK2_HZ,
+        .sample_time = ENV_AS5600_ADC_SAMPLE,
+        .timeout = 0, /* ADC_DEFAULT_TIMEOUT */
+    };
+
+    driver_err_t err = adc_init(&adc, &cfg);
+    if (err != DRIVER_OK)
+        return err;
+
+    return adc_config_pin(&adc, ENV_AS5600_ADC_PORT, ENV_AS5600_ADC_PIN, &as5600_adc_channel);
+}
+#endif
+
+static BaseType_t as5600_task_setup(void)
+{
+    const task_as5600_config_t cfg = {
+#if ENV_AS5600_USE_ADC
+        .source = TASK_AS5600_SOURCE_ADC,
+#else
+        .source = TASK_AS5600_SOURCE_I2C,
+#endif
+        .adc = &adc,
+        .adc_channel = as5600_adc_channel,
+        .oversample = ENV_AS5600_ADC_OVERSAMPLE,
+        .adc_min = ENV_AS5600_ADC_MIN,
+        .adc_max = ENV_AS5600_ADC_MAX,
+        .max_rpm = ENV_MOTOR_MAX_RPM,
+        .period_us = ENV_AS5600_TIM_PERIOD_US,
+        .velocity_window_us = ENV_AS5600_VEL_WINDOW_US,
+#if ENV_AS5600_USE_ADC && !ENV_AS5600_USE_I2C
+        .i2c = NULL,
+#else
+        .i2c = &i2c, /* obrigatório na fonte I2C */
+#endif
+    };
+
+    return task_as5600_create(&cfg, log_write);
 }
 
 static driver_err_t as5600_tim_setup(void)
@@ -167,19 +266,33 @@ static BaseType_t motor_task_setup(void)
 
 int main(void)
 {
-    SystemCoreClockUpdate(); /* HSI 16 MHz */
+    SystemCoreClockUpdate(); /* HSI 16 MHz após o reset */
+
+    /* Antes de tudo: os periféricos são configurados para o clock final */
+    const driver_err_t clk_err = clock_setup();
 
     if (uart_setup() != DRIVER_OK)
         init_error();
 
-    log_write("\r\n[main] FOCYou: UART ok\r\n");
+    /* Logo depois da UART: todos os logs passam por ele (antes do scheduler, direto) */
+    const BaseType_t logger_ok = logger_setup();
 
-    log_mutex = xSemaphoreCreateMutex();
-    if (log_mutex == NULL)
+    log_write("[main] FOCYou: UART ok\r\n");
+
+    if (logger_ok != pdPASS)
     {
-        log_write("[main] falha ao criar o mutex de log\r\n");
+        log_write("[main] falha ao criar o logger (DMA ou heap)\r\n");
         init_error();
     }
+
+    if (clk_err != DRIVER_OK)
+    {
+        /* Com o clock errado o baudrate também sai errado: este log pode sair ilegível */
+        log_write("[main] falha ao configurar o clock de 50 MHz\r\n");
+        init_error();
+    }
+
+    log_write("[main] SYSCLK = 50 MHz (PLL, HSE 25 MHz)\r\n");
 
     if (i2c_setup() != DRIVER_OK)
     {
@@ -189,7 +302,17 @@ int main(void)
 
     log_write("[main] I2C ok\r\n");
 
-    if (task_as5600_create(&i2c, ENV_AS5600_TIM_PERIOD_US, log_write) != pdPASS)
+#if ENV_AS5600_USE_ADC
+    if (adc_setup() != DRIVER_OK)
+    {
+        log_write("[main] falha ao configurar o ADC do AS5600\r\n");
+        init_error();
+    }
+
+    log_write("[main] ADC ok\r\n");
+#endif
+
+    if (as5600_task_setup() != pdPASS)
     {
         log_write("[main] falha ao criar a task do AS5600\r\n");
         init_error();
