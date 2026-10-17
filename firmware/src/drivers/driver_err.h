@@ -9,10 +9,11 @@
  * - -1 a -9     genéricos
  * - -10 a -19   GPIO
  * - -20 a -29   RCC
- * - -30 a -39   reservado (UART)
+ * - -30 a -39   UART
  * - -40 a -49   I2C
  * - -50 a -59   timers
- * - -60 em diante: reservado para novos periféricos
+ * - -60 a -69   ADC
+ * - -70 em diante: reservado para novos periféricos
  */
 
 #ifndef DRIVER_ERR_H
@@ -43,6 +44,10 @@ typedef enum
     DRIVER_ERR_INVALID_PLL_M_FACTOR = -27,      /**< Fator de divisão M do PLL inválido. */
     DRIVER_ERR_INVALID_PLL_N_FACTOR = -28,      /**< Fator de multiplicação N do PLL inválido. */
 
+    /* UART */
+    DRIVER_ERR_UART_BUSY = -30,                 /**< Transmissão por DMA em andamento. */
+    DRIVER_ERR_UART_NO_DMA = -31,               /**< Instância sem DMA configurado (chame uart_dma_init()). */
+
     /* I2C */
     DRIVER_ERR_I2C_TIMEOUT = -40,               /**< Flag esperado não setou dentro do timeout. */
     DRIVER_ERR_I2C_NACK = -41,                  /**< Endereço ou dado sem ACK (flag AF). */
@@ -55,6 +60,11 @@ typedef enum
     /* Timers */
     DRIVER_ERR_TIM_OUT_OF_RANGE = -50,          /**< Período inatingível com o clock do timer. */
     DRIVER_ERR_TIM_NOT_INITIALIZED = -51,       /**< Timer ainda não inicializado. */
+
+    /* ADC */
+    DRIVER_ERR_ADC_TIMEOUT = -60,               /**< A conversão não terminou dentro do timeout. */
+    DRIVER_ERR_ADC_NOT_INITIALIZED = -61,       /**< adc_init() ainda não foi chamado. */
+    DRIVER_ERR_ADC_INVALID_CHANNEL = -62,       /**< Canal fora de 0 a 18 ou pino sem entrada analógica. */
 } driver_err_t;
 
 #endif /* DRIVER_ERR_H */
