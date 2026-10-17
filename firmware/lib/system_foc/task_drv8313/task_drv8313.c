@@ -736,6 +736,11 @@ float task_drv8313_get_u(void)
     return comm_u;
 }
 
+uint8_t task_drv8313_get_sector(void)
+{
+    return comm_sector;
+}
+
 void task_drv8313_encoder_sample(uint16_t raw, float velocity_rad_s, float dt_s)
 {
     enc_raw = raw;

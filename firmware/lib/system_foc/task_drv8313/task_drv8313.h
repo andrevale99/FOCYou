@@ -217,6 +217,9 @@ float task_drv8313_get_target_rpm(void);
 /** @brief Tensão normalizada aplicada atualmente (0.0 a 1.0). */
 float task_drv8313_get_u(void);
 
+/** @brief Último setor aplicado pela ISR de comutação (0 a 5). */
+uint8_t task_drv8313_get_sector(void);
+
 /**
  * @brief Recebe uma amostra do encoder; registre com task_as5600_set_sample_callback().
  *
