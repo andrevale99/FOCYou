@@ -1,6 +1,7 @@
 #ifndef UART_H
 #define UART_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -92,7 +93,8 @@ driver_err_t uart_send_char(USART_TypeDef *usart, char c);
 /**
  * @brief Transmite uma string por uma USART.
  *
- * Bloqueia até que todos os caracteres sejam enviados ao periférico.
+ * Bloqueia até que todos os caracteres sejam enviados ao periférico. Se houver
+ * transmissão por DMA em andamento, espera ela terminar antes.
  *
  * @param[in] usart Periférico previamente inicializado com uart_init().
  * @param[in] str   String terminada em '\0'.
@@ -104,5 +106,50 @@ driver_err_t uart_send_char(USART_TypeDef *usart, char c);
  *     @p usart ou @p str é NULL.
  */
 driver_err_t uart_send_string(USART_TypeDef *usart, const char *str);
+
+/* ------------------------------------------------------------------ */
+/* Transmissão por DMA                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @brief Prepara a transmissão por DMA (TX) de uma USART já inicializada.
+ *
+ * Streams usados (RM0383, tabelas de requisição do DMA):
+ *
+ * | USART  | DMA  | Stream | Canal |
+ * |--------|------|--------|-------|
+ * | USART1 | DMA2 | 7      | 4     |
+ * | USART2 | DMA1 | 6      | 4     |
+ * | USART6 | DMA2 | 6      | 5     |
+ *
+ * Não usa interrupções: o fim da transmissão é consultado com uart_dma_busy().
+ *
+ * @param[in] usart Periférico inicializado com uart_init().
+ * @retval DRIVER_OK              Sucesso.
+ * @retval DRIVER_ERR_INVALID_ARG @p usart é NULL ou não suportada.
+ */
+driver_err_t uart_dma_init(USART_TypeDef *usart);
+
+/**
+ * @brief Inicia a transmissão de @p len bytes por DMA e retorna na hora.
+ *
+ * @param[in] usart Periférico com uart_dma_init() feito.
+ * @param[in] data  Dados; o buffer precisa continuar válido e sem alteração até
+ *                  uart_dma_busy() retornar false.
+ * @param[in] len   Quantidade de bytes (1 a 65535; 0 não faz nada).
+ *
+ * @retval DRIVER_OK              Transmissão iniciada.
+ * @retval DRIVER_ERR_INVALID_ARG NULL ou instância não suportada.
+ * @retval DRIVER_ERR_UART_NO_DMA uart_dma_init() não foi chamado.
+ * @retval DRIVER_ERR_UART_BUSY   Uma transmissão anterior ainda está em andamento.
+ */
+driver_err_t uart_send_dma(USART_TypeDef *usart, const uint8_t *data, uint16_t len);
+
+/**
+ * @brief Informa se há transmissão por DMA em andamento.
+ * @param[in] usart Periférico.
+ * @return true enquanto o DMA ainda tem bytes para enviar.
+ */
+bool uart_dma_busy(USART_TypeDef *usart);
 
 #endif
