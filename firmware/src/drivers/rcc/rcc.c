@@ -1,5 +1,20 @@
 #include "rcc.h"
 
+/* Frequências das fontes (HSE_VALUE vem do makefile; o Black Pill usa cristal de 25 MHz) */
+#ifndef HSI_VALUE
+#define HSI_VALUE 16000000U
+#endif
+#ifndef HSE_VALUE
+#define HSE_VALUE 25000000U
+#endif
+
+/* Faixas do PLL no STM32F411 (RM0383, RCC_PLLCFGR) */
+#define PLL_VCO_IN_MIN_HZ 950000U    /* entrada do VCO (fonte / M) */
+#define PLL_VCO_IN_MAX_HZ 2100000U
+#define PLL_VCO_OUT_MIN_HZ 100000000U /* saída do VCO (entrada · N) */
+#define PLL_VCO_OUT_MAX_HZ 432000000U
+#define PLL_Q_DEFAULT 4U             /* PLLQ válido (2..15); só alimenta USB/SDIO */
+
 /**
  * @brief Configura o número de estados de espera da memória Flash.
  *
@@ -29,6 +44,9 @@
  */
 static void set_wait_state_flash(uint32_t SystemCoreClock)
 {
+    /* Prefetch e caches de instrução e de dados: reduzem o custo dos wait states */
+    FLASH->ACR |= FLASH_ACR_PRFTEN | FLASH_ACR_ICEN | FLASH_ACR_DCEN;
+
     if (SystemCoreClock <= 30000000U)
     {
         FLASH->ACR &= ~FLASH_ACR_LATENCY;
@@ -71,6 +89,13 @@ driver_err_t rcc_init(rcc_config_t *config)
     else
     {
         uint32_t pll_clock;
+        uint32_t source_hz;
+
+        /*
+         * Valida os fatores antes de qualquer conta (evita divisão por zero).
+         */
+        if ((config->pll_conf.m_factor < 2U) || (config->pll_conf.m_factor > 63U))
+            return DRIVER_ERR_INVALID_PLL_M_FACTOR;
 
         if (config->pll_conf.source == RCC_HSE)
         {
@@ -81,6 +106,8 @@ driver_err_t rcc_init(rcc_config_t *config)
 
             while (!(RCC->CR & RCC_CR_HSERDY))
                 ;
+
+            source_hz = HSE_VALUE;
         }
         else
         {
@@ -91,20 +118,21 @@ driver_err_t rcc_init(rcc_config_t *config)
 
             while (!(RCC->CR & RCC_CR_HSIRDY))
                 ;
+
+            source_hz = HSI_VALUE;
         }
 
-        SystemCoreClockUpdate();
-
         /*
-         * Calcula a frequência que será produzida pelo PLL.
-         *
-         * HSE_VALUE é definido pelo CMSIS, normalmente
-         * em stm32f4xx.h.
+         * Calcula a frequência que será produzida pelo PLL a partir da
+         * frequência da fonte (o SYSCLK atual ainda não é o PLL).
          */
+        if (config->pll_conf.p_factor == 0U)
+            return DRIVER_ERR_INVALID_PLL_P_FACTOR;
+
         pll_clock =
-            ((SystemCoreClock / config->pll_conf.m_factor) *
-             config->pll_conf.n_factor) /
-            config->pll_conf.p_factor;
+            (uint32_t)(((uint64_t)(source_hz / config->pll_conf.m_factor) *
+                        config->pll_conf.n_factor) /
+                       config->pll_conf.p_factor);
 
         /*
          * Configura Flash antes de aumentar a frequência
@@ -266,6 +294,7 @@ driver_err_t rcc_configure_pll(rcc_pll_config_t *pll)
 {
     uint32_t pll_p;
     uint32_t pll_source;
+    uint32_t source_hz;
 
     if (pll == NULL)
         return DRIVER_ERR_INVALID_ARG;
@@ -280,10 +309,12 @@ driver_err_t rcc_configure_pll(rcc_pll_config_t *pll)
     {
     case RCC_HSI:
         pll_source = 0U;
+        source_hz = HSI_VALUE;
         break;
 
     case RCC_HSE:
         pll_source = RCC_PLLCFGR_PLLSRC;
+        source_hz = HSE_VALUE;
         break;
 
     default:
@@ -309,6 +340,19 @@ driver_err_t rcc_configure_pll(rcc_pll_config_t *pll)
     {
         return DRIVER_ERR_INVALID_PLL_N_FACTOR;
     }
+
+    /*
+     * Faixas do VCO: entrada (fonte / M) de 0,95 a 2,1 MHz
+     * e saída (entrada · N) de 100 a 432 MHz.
+     */
+    const uint32_t vco_in = source_hz / pll->m_factor;
+    const uint64_t vco_out = (uint64_t)vco_in * pll->n_factor;
+
+    if ((vco_in < PLL_VCO_IN_MIN_HZ) || (vco_in > PLL_VCO_IN_MAX_HZ))
+        return DRIVER_ERR_INVALID_PLL_M_FACTOR;
+
+    if ((vco_out < PLL_VCO_OUT_MIN_HZ) || (vco_out > PLL_VCO_OUT_MAX_HZ))
+        return DRIVER_ERR_INVALID_PLL_N_FACTOR;
 
     /*
      * PLLP aceita somente os valores:
@@ -358,8 +402,17 @@ driver_err_t rcc_configure_pll(rcc_pll_config_t *pll)
      * VCO        = PLL input * N
      * PLL output = VCO / P
      */
+    /*
+     * PLLQ precisa ficar entre 2 e 15 (0 e 1 são proibidos): mantém o valor atual
+     * se for válido, senão usa PLL_Q_DEFAULT.
+     */
+    uint32_t pll_q = (RCC->PLLCFGR & RCC_PLLCFGR_PLLQ) >> RCC_PLLCFGR_PLLQ_Pos;
+    if (pll_q < 2U)
+        pll_q = PLL_Q_DEFAULT;
+
     RCC->PLLCFGR =
-        (pll->m_factor << RCC_PLLCFGR_PLLM_Pos) | (pll->n_factor << RCC_PLLCFGR_PLLN_Pos) | (pll_p << RCC_PLLCFGR_PLLP_Pos) | pll_source;
+        (pll->m_factor << RCC_PLLCFGR_PLLM_Pos) | (pll->n_factor << RCC_PLLCFGR_PLLN_Pos) | (pll_p << RCC_PLLCFGR_PLLP_Pos) |
+        (pll_q << RCC_PLLCFGR_PLLQ_Pos) | pll_source;
 
     /*
      * Habilita PLL.

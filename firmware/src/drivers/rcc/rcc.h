@@ -181,8 +181,13 @@ typedef struct
  *     Fator P do PLL inválido.
  *
  * @note
- *     Quando o PLL é utilizado, a implementação considera o HSE como
- *     fonte de entrada do PLL.
+ *     A frequência da fonte do PLL vem de HSE_VALUE (makefile) ou HSI_VALUE
+ *     e define os wait states da flash, que são ajustados antes da troca.
+ *     O prefetch e os caches da flash são ligados.
+ *
+ * @warning
+ *     As esperas por HSERDY e PLLRDY não têm timeout: sem o cristal do HSE,
+ *     a função não retorna.
  *
  * @warning
  *     O ponteiro @p config deve apontar para uma estrutura de configuração
@@ -250,6 +255,12 @@ driver_err_t rcc_set_system_clock_source(rcc_clock_source_t clock_source);
  *
  * @retval DRIVER_ERR_INVALID_PLL_P_FACTOR
  *     Fator de divisão P inválido. São permitidos os valores 2, 4, 6 e 8.
+ *
+ * @retval DRIVER_ERR_INVALID_PLL_M_FACTOR
+ *     M fora de 2 a 63, ou entrada do VCO (fonte / M) fora de 0,95 a 2,1 MHz.
+ *
+ * @retval DRIVER_ERR_INVALID_PLL_N_FACTOR
+ *     N fora de 50 a 432, ou saída do VCO (entrada · N) fora de 100 a 432 MHz.
  *
  * @note
  *     O fator P é convertido para o campo PLLP do registrador
