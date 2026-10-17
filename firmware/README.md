@@ -1,7 +1,7 @@
 # Firmware FOCYou
 
 Firmware de controle de motor BLDC para o **STM32F411 (Black Pill)**, compilado em bare-metal (CMSIS + FreeRTOS, sem HAL).
-Hardware atual: módulo **SimpleFOC Mini (DRV8313)** e encoder magnético **AS5600**. O controle de velocidade é feito por **six-step**: partida em rampa (malha aberta) e depois malha fechada com PID. O objetivo final é o FOC.
+Hardware atual: módulo **SimpleFOC Mini (DRV8313)** e encoder magnético **AS5600**, lido pelo I2C (ou pela saída analógica, com o ADC). O controle de velocidade é feito por **six-step**: partida em rampa (malha aberta) e depois malha fechada com PID. O objetivo final é o FOC.
 
 > Não estão neste resumo `Drivers/` (CMSIS da ARM/ST) e `FreeRTOS/` (kernel), que são código de terceiros.
 
@@ -17,18 +17,21 @@ firmware/
 │   ├── sixstep/              # lógica de comutação six-step (trapezoidal 120°)
 │   ├── foc/                  # transformadas de Clarke e Park
 │   ├── pid/                  # controlador PID com anti-windup
-│   ├── as5600/               # encoder magnético AS5600 (I2C)
+│   ├── as5600/               # encoder magnético AS5600 (I2C e cálculo de voltas/velocidade)
 │   ├── lcd16x2/              # display HD44780 em modo de 4 bits
 │   └── system_foc/           # tasks do FreeRTOS que ligam as bibliotecas
-│       ├── task_as5600/      # leitura do encoder a cada interrupção do timer
+│       ├── task_as5600/      # leitura do encoder (saída analógica) a cada interrupção do timer
 │       ├── task_drv8313/     # partida, comutação e controle de velocidade
+│       ├── task_logger/      # CSV de 1 ms e logs de texto pela UART com DMA
 │       └── task_queue.h      # reservado para filas entre tasks (vazio)
 ├── src/
 │   ├── drivers/              # camada de acesso a registradores (HAL própria)
 │   │   ├── driver_err.h      # códigos de erro comuns
-│   │   ├── gpio/  rcc/  uart/  i2c/  gptim/  lcd/
+│   │   ├── gpio/  rcc/  uart/  i2c/  gptim/  adc/  lcd/
 │   ├── main.c                # inicialização, ISRs e criação das tasks
 │   └── FreeRTOSConfig.h, startup, syscalls, system_stm32f4xx.c
+├── tools/
+│   └── plot_log.py           # lê e plota o CSV gravado com cat
 ├── pdfs/                     # documentação de referência
 ├── makefile                  # arm-none-eabi-gcc; alvos all, compile, flash, clean
 └── STM32F411XE_FLASH.ld
@@ -182,7 +185,7 @@ O resultado fica em `pid.output`, na faixa [−saturation, +saturation]. Na `tas
 
 ### `as5600`: encoder magnético AS5600
 
-**Uso:** posição e velocidade do rotor, lidas pela `task_as5600`.
+**Uso:** a `task_as5600` usa o I2C só para configurar o sensor e conferir o ímã, e usa `as5600_track_raw` para calcular voltas e velocidade a partir do ângulo lido pelo ADC.
 
 Sensor Hall de 12 bits (4096 contagens por volta). Endereço I2C **0x36** (AS5600) ou **0x40** (padrão do AS5600L), escolhido em `as5600_config_t::address` (0 = 0x36). Usa o driver `i2c`: a aplicação inicializa o barramento e passa o ponteiro do `i2c_t` na configuração, o que permite compartilhar o barramento. O sentido de contagem é definido pelo pino **DIR** do sensor (GND = cresce no sentido horário, VDD = anti-horário); a `task_drv8313` descobre esse sentido sozinha na calibração.
 
@@ -201,7 +204,7 @@ Sensor Hall de 12 bits (4096 contagens por volta). Endereço I2C **0x36** (AS560
 | Diagnóstico | `as5600_read_status` (MD/ML/MH), `as5600_check_magnet`, `as5600_read_agc`, `as5600_read_magnitude` |
 | Configuração (RAM) | `as5600_get_conf` / `as5600_set_conf` (PM, HYST, OUTS, PWMF, SF, FTH, WD), `as5600_get/set_zpos`, `_mpos`, `_mang` |
 | OTP (irreversível) | `as5600_get_burn_count` (ZMCO), `as5600_burn_angle` (ZPOS/MPOS, até 3 vezes), `as5600_burn_setting` (MANG/CONF, uma vez) |
-| Posição e velocidade | `as5600_update(h, dt_s)`, `as5600_reset_tracking`, `as5600_get_raw`, `as5600_get_angle_rad`, `as5600_get_position_rad`, `as5600_get_turns`, `as5600_get_velocity_rad_s` |
+| Posição e velocidade | `as5600_update(h, dt_s)` (lê pelo I2C), `as5600_track_raw(h, raw, dt_s)` (ângulo de outra fonte, sem exigir `init`), `as5600_reset_tracking`, `as5600_get_raw`, `as5600_get_angle_rad`, `as5600_get_position_rad`, `as5600_get_turns`, `as5600_get_velocity_rad_s` |
 | Conversões | `as5600_counts_to_rad`, `as5600_counts_to_deg` (`static inline`) |
 
 Observações:
@@ -228,22 +231,39 @@ Se `delay_ms` usar `vTaskDelay`, o LCD só pode ser inicializado com o scheduler
 
 ### `task_as5600`: leitura do encoder
 
-Detecta o encoder e o lê a cada interrupção de um timer (`gptim`).
+A fonte do ângulo é escolhida em `task_as5600_config_t::source` (`ENV_AS5600_USE_ADC` no `env.h`):
 
-1. Espera o power-up do sensor (10 ms) e procura o encoder em **0x36** e depois em **0x40**. Sem nenhum dos dois, fica presa gerando o log de erro a cada 1 s.
-2. Grava o CONF (sempre ligado, sem histerese, filtro `SF_2X`, `FTH_6LSB`) e confere o ímã (log do AGC ou do problema).
-3. A cada notificação do timer, chama `as5600_update` e, se a leitura deu certo, chama o **callback de amostra** com `(raw, velocidade em rad/s, dt)`.
+| Fonte | Leitura | Amostragem | Observação |
+|---|---|---|---|
+| **I2C** (padrão) | RAW ANGLE por `as5600_read_raw_angle` | 1 kHz | Cada leitura ocupa a CPU por ~150 µs (polling a 400 kHz). Sem o sensor em 0x36 nem 0x40, a task fica presa avisando a cada 1 s. Com `BUSY` ou `TIMEOUT`, chama `i2c_bus_recover` |
+| **ADC** | Pino OUT pelo ADC1 | 5 kHz | Descrita abaixo. Nos testes, a tensão de OUT ficou parada (~3,2 V) enquanto o I2C mostrava o ângulo girando: confira a ligação do OUT até o PA1 antes de voltar a ela |
 
+O resto do processamento é o mesmo nas duas fontes: rejeição de leituras impossíveis, `as5600_track_raw`, velocidade na janela e o callback de amostra.
+
+**Fonte ADC:** lê o pino **OUT** do AS5600 (saída analógica de 0% a 100% de VDD) pelo ADC a cada interrupção de um timer (`gptim`). Com o AS5600 e o STM32 na mesma alimentação de 3,3 V a leitura é ratiométrica: 0 a 4095 do ADC = 0 a 360°.
+
+1. Espera o power-up do sensor (10 ms).
+2. **I2C opcional:** se houver, procura o encoder em **0x36** e depois em **0x40**, grava o CONF (saída analógica de faixa cheia, sempre ligado, filtro `SF_2X`, `FTH_6LSB`) e confere o ímã. Sem resposta (ou sem I2C), segue com a configuração de fábrica, que já é a saída analógica de faixa cheia.
+3. A cada notificação do timer:
+   - faz `oversample` conversões e tira a média pelo menor caminho, para não errar perto de 0°/360° (a média simples de 4095 e 0 daria 2048);
+   - converte para ângulo usando a faixa `adc_min..adc_max`;
+   - descarta leituras impossíveis;
+   - chama `as5600_track_raw` (voltas), calcula a velocidade na janela e chama o **callback de amostra** com `(raw, velocidade em rad/s, dt)`.
+
+- **Taxa de amostragem:** 5 kHz (200 µs). O AS5600 atualiza o ângulo a cada cerca de 150 µs, então amostrar mais rápido só repetiria valores. A comutação na malha fechada recebe um ângulo novo a cada 200 µs, o que reduz o erro da estimativa entre amostras.
+- **Velocidade na janela:** derivar amostra a amostra piora o ruído com a taxa (a 5 kHz, uma contagem vale 73 rpm). Por isso a velocidade é a variação de posição dentro de uma janela fixa (`velocity_window_us` = 1 ms, ou 15 rpm por contagem), recalculada a cada amostra. A resolução não depende da taxa e o atraso é de meia janela (0,5 ms). Com `velocity_window_us` = 0 volta a ser amostra a amostra.
+
+- **Leituras descartadas:** quando o ângulo passa por 0°/360°, a tensão de OUT salta entre VDD e 0 V, e uma conversão no meio do salto dá um ângulo qualquer. Uma variação maior que 1,5 × a possível com `max_rpm` (mais 16 contagens de folga para o ruído) é descartada, até 3 vezes seguidas. O log mostra quantas foram descartadas a cada segundo.
 - **Notificações acumuladas:** se a task atrasar, as notificações acumuladas valem por uma leitura só, mas o `dt` passado ao callback conta todas.
-- **Erros de I2C:** com `BUSY` ou `TIMEOUT`, chama `i2c_bus_recover`. O log mostra o primeiro erro e depois um resumo a cada 1 s.
+- **Erros do ADC:** o log mostra o primeiro erro e depois um resumo a cada 1 s.
 - **Timer parado:** se passar 1 s sem notificação, a task avisa no log.
 
 | Função | Descrição |
 |---|---|
-| `task_as5600_create(&i2c, period_us, log)` | Cria a task; `period_us` é o período do timer que a notifica |
+| `task_as5600_create(&cfg, log)` | `cfg`: ADC e canal, `oversample`, `adc_min`/`adc_max`, `max_rpm`, `period_us`, `velocity_window_us` e `i2c` (ou `NULL`) |
 | `task_as5600_notify_from_isr` | Callback do timer (`vTaskNotifyGiveFromISR`) |
-| `task_as5600_set_sample_callback(cb)` | Registra o callback chamado após cada leitura, no contexto da task |
-| `task_as5600_get_raw` / `get_velocity_rpm` / `is_ready` | Última leitura |
+| `task_as5600_set_sample_callback(cb)` | Registra o callback chamado após cada leitura aceita, no contexto da task |
+| `task_as5600_get_raw` / `get_adc` / `get_velocity_rpm` / `is_ready` | Último ângulo, última leitura bruta do ADC (para calibrar a faixa), velocidade e estado |
 
 ### `task_drv8313`: partida e controle de velocidade
 
@@ -287,6 +307,40 @@ IDLE --start--> ALIGN --2 · align_ms--> RAMP --rpm = ramp_end_rpm--> RUN
 
 Os logs saem com o prefixo `[drv8313]`, entre eles a calibração, as mudanças de estado e, na malha fechada, uma linha por segundo com setpoint, velocidade medida e tensão. Os números são inteiros porque o `printf` da newlib-nano não formata `float`.
 
+### `task_logger`: CSV de 1 ms e logs de texto
+
+Envia pela UART, com DMA, uma linha de CSV a cada `period_ms` e os logs de texto de todas as tasks. A saída é feita para ser gravada direto com `cat`:
+
+```
+t_us,pwm_a,pwm_b,pwm_c,setor,pos,pos_unwrap,vel_rpm_x10     <- cabeçalho, uma vez no início
+1234567,875,375,625,3,4021,1052693,15015                    <- uma linha por ms
+# [drv8313] estado: RAMP -> RUN                             <- logs de texto, sempre com '#'
+```
+
+- **Linha do CSV:** a cada período, a task chama o callback `sample` (definido no `main.c`), monta a linha em texto sem `printf` e põe o tempo em µs na frente. O tempo vem do contador de ciclos do núcleo (`DWT->CYCCNT`, estendido para 64 bits).
+- **Logs de texto:** `task_logger_write` põe `# ` no começo de cada linha e coloca a mensagem numa fila (*message buffer*). No máximo uma mensagem vai junto com cada linha do CSV. Antes do scheduler, envia direto, bloqueando.
+- **Nunca atrasa o controle:** a task tem a menor prioridade (1). Se o DMA ainda estiver enviando quando a linha seguinte ficar pronta, ela é descartada. As descartadas aparecem como saltos no `t_us` e são contadas num log `# [logger] N linha(s) descartada(s)` a cada 1 s. Um log de texto junto com a linha pode fazer a seguinte ser descartada.
+
+| Coluna | Origem |
+|---|---|
+| `t_us` | Tempo em µs desde o início |
+| `pwm_a` / `pwm_b` / `pwm_c` | CCR1..CCR3 do TIM3 (0 a 1250 com PWM de 20 kHz a 50 MHz) |
+| `setor` | Último setor aplicado pela ISR de comutação (`task_drv8313_get_sector`) |
+| `pos` / `pos_unwrap` | Ângulo de 0 a 4095 e posição sem wrap (voltas · 4096 + ângulo), lidos juntos (`task_as5600_get_sample`) |
+| `vel_rpm_x10` | Velocidade filtrada da `task_drv8313`, em rpm × 10 (o `printf` da newlib-nano não formata `float`) |
+
+Banda: cerca de 45 bytes por linha a 1 kHz, ou seja, 45 kB/s, cerca de metade da capacidade a 921600 baud.
+
+**No PC:**
+
+```bash
+stty -F /dev/ttyUSB0 921600 raw -echo
+cat /dev/ttyUSB0 > log.csv            # inicie antes de dar reset na placa; Ctrl+C para parar
+python3 tools/plot_log.py log.csv     # precisa de pandas e matplotlib
+```
+
+O `plot_log.py` ignora as linhas com `#`, aceita arquivos sem cabeçalho (quando o `cat` começa depois do reset), descarta linhas cortadas e informa quantos saltos de tempo houve.
+
 ### `task_queue.h`
 
 Reservado para as filas entre tasks. Está vazio.
@@ -298,7 +352,7 @@ Reservado para as filas entre tasks. Está vazio.
 É a HAL própria do projeto, que acessa os registradores via CMSIS. Todas as funções retornam `driver_err_t`.
 
 ### `driver_err.h`
-Enum de erro único para todos os drivers, com faixas por módulo: 0 = OK; −1..−9 genéricos; −10..−19 GPIO; −20..−29 RCC; −30..−39 reservado para UART; −40..−49 I2C; −50..−59 timers.
+Enum de erro único para todos os drivers, com faixas por módulo: 0 = OK; −1..−9 genéricos; −10..−19 GPIO; −20..−29 RCC; −30..−39 reservado para UART; −40..−49 I2C; −50..−59 timers; −60..−69 ADC.
 
 ### `gpio/driver_gpio`
 | Função | Registrador |
@@ -315,10 +369,17 @@ Enum de erro único para todos os drivers, com faixas por módulo: 0 = OK; −1.
 
 ### `rcc/rcc`
 Configura o clock do sistema: `rcc_init(rcc_config_t*)` (fonte, PLL e prescalers AHB/APB1/APB2, e atualiza `SystemCoreClock`), `rcc_set_system_clock_source`, `rcc_configure_pll` (M, N, P, com f = src/M·N/P; usa o HSE como entrada), `rcc_set_apbx_divider`, `rcc_set_ahb_divider` e `rcc_get_clock_status`.
-O `main.c` ainda não usa esse driver; o sistema roda no **HSI de 16 MHz** (`HSE_VALUE` = 25 MHz no makefile).
+O `main.c` usa esse driver para rodar a **50 MHz**: PLL a partir do HSE de 25 MHz (`HSE_VALUE` no makefile), com M = 25, N = 200 e P = 4.
+- **Wait states:** são calculados com a frequência da fonte do PLL e ajustados antes da troca. O prefetch e os caches da flash ficam ligados.
+- **Validação:** M, N e P são conferidos, assim como as faixas do VCO (entrada de 0,95 a 2,1 MHz, saída de 100 a 432 MHz).
+- **PLLQ:** é mantido num valor válido (2 a 15).
+- **Sem timeout:** as esperas por HSERDY e PLLRDY não têm timeout, então sem o cristal do HSE o `rcc_init` não retorna.
 
 ### `uart/uart`
-UART por polling (USART1, USART2 ou USART6), com 8N1, sem controle de fluxo e oversampling de 16: `uart_init(uart_config_t*)`, `uart_send_char`, `uart_send_string`. A transmissão bloqueia até terminar, então não deve ser chamada de ISR.
+UART (USART1, USART2 ou USART6), com 8N1, sem controle de fluxo e oversampling de 16.
+
+- **Polling:** `uart_init(uart_config_t*)`, `uart_send_char` e `uart_send_string`. A transmissão bloqueia até terminar, então não deve ser chamada de ISR. `uart_send_string` espera uma transmissão por DMA em andamento terminar antes de começar.
+- **DMA (TX):** `uart_dma_init(usart)`, `uart_send_dma(usart, buf, len)` e `uart_dma_busy(usart)`. `uart_send_dma` inicia a transmissão e retorna na hora; o buffer precisa continuar válido até `uart_dma_busy` voltar a `false`. Não usa interrupções. Streams: USART1 = DMA2 stream 7 canal 4, USART2 = DMA1 stream 6 canal 4, USART6 = DMA2 stream 6 canal 5. Erros novos: `DRIVER_ERR_UART_BUSY` e `DRIVER_ERR_UART_NO_DMA`.
 
 ### `i2c/i2c`
 I2C mestre por polling, com timeout em todas as esperas (I2C1, I2C2 ou I2C3; endereços de 7 bits; 100 kHz ou 400 kHz).
@@ -333,7 +394,7 @@ I2C mestre por polling, com timeout em todas as esperas (I2C1, I2C2 ou I2C3; end
 
 - **Leitura:** segue as sequências do RM0383 para 1, 2 e 3 ou mais bytes, com os trechos críticos protegidos contra interrupções.
 - **Erros:** NACK, BERR e timeout geram STOP para liberar o barramento.
-- **Hardware:** precisa de pull-up externo (2,2 kΩ a 4,7 kΩ). Com o PCLK1 de 16 MHz, o fast mode fica em cerca de 381 kHz.
+- **Hardware:** precisa de pull-up externo (2,2 kΩ a 4,7 kΩ). Com o PCLK1 de 50 MHz, o fast mode fica em cerca de 397 kHz.
 - **Uso:** bloqueia durante a transação, então use só de tasks, não de ISR.
 
 ### `gptim/gptim`
@@ -347,12 +408,24 @@ Base de tempo periódica com os timers general purpose: gera uma interrupção d
 
 | Função | Descrição |
 |---|---|
-| `gptim_init(&h, &cfg)` / `gptim_deinit` | Clock, PSC/ARR, interrupção de update e prioridade no NVIC. PSC é escolhido para dar o período exato quando possível (ex.: 16 MHz e 10 ms → PSC = 3, ARR = 39999) |
+| `gptim_init(&h, &cfg)` / `gptim_deinit` | Clock, PSC/ARR, interrupção de update e prioridade no NVIC. PSC é escolhido para dar o período exato quando possível (ex.: 16 MHz e 10 ms → PSC = 3, ARR = 39999; 50 MHz e 1 ms → PSC = 0, ARR = 49999) |
 | `gptim_start` / `gptim_stop` / `gptim_is_running` | Controle do contador |
 | `gptim_set_period_us` | Muda o período; com o timer rodando, vale no próximo update |
 | `gptim_irq_handler(&h)` | Limpa o UIF e chama o callback; a aplicação chama de dentro do handler do vetor |
 
 O driver não define os handlers de interrupção, porque alguns vetores são compartilhados com o TIM1. Para chamar a API `FromISR` do FreeRTOS no callback, a prioridade precisa ser numericamente ≥ `configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY` (5). Um timer usado aqui não pode ser usado ao mesmo tempo para PWM.
+
+### `adc/adc`
+ADC1 em conversão única por software (polling com timeout), 12 bits. O clock do ADC é o PCLK2 dividido pelo menor divisor (2, 4, 6 ou 8) que dá ADCCLK ≤ 36 MHz; com PCLK2 = 50 MHz, ADCCLK = 25 MHz.
+
+| Função | Descrição |
+|---|---|
+| `adc_init(&h, &cfg)` / `adc_deinit` | Clock, prescaler e ADC ligado; `cfg` define o tempo de amostragem dos canais |
+| `adc_config_pin(&h, port, pin, &channel)` | Pino em modo analógico, tempo de amostragem do canal e o canal correspondente (PA0..PA7 = IN0..IN7, PB0/PB1 = IN8/IN9, PC0..PC5 = IN10..IN15) |
+| `adc_read(&h, channel, &value)` | Uma conversão (0 a 4095); com 56 ciclos de amostragem a 25 MHz, leva 2,7 µs |
+| `adc_read_average(&h, channel, n, &value)` | Média simples de `n` conversões (não serve para ângulos perto de 0°/360°) |
+
+Bloqueia durante a conversão; use de um único contexto por vez.
 
 ### `lcd/driver_lcd16x2.h`
 Ligação entre a biblioteca `lcd16x2` e o hardware: pinos D4 a D7, EN e RS em **PA0 a PA5**. Tem `driver_lcd16x2_init()` e as funções `write_d4` ... `write_rs` (`static inline`), que são passadas como callbacks.
@@ -365,10 +438,12 @@ Concentra tudo que depende da placa e do motor. Só o `src/` pode incluí-lo; as
 
 | Grupo | Valores atuais |
 |---|---|
-| Clocks | HSI 16 MHz, APB1 = APB2 = 16 MHz |
-| I2C1 | SCL = PB6, SDA = PB7 (AF4), fast mode |
-| USART1 (log) | TX = PA9, RX = PA10 (AF7), 115200 8N1 |
-| Timer do AS5600 | TIM10, 1 ms, prioridade 6 (`TIM1_UP_TIM10_IRQHandler`) |
+| Clocks | SYSCLK = 50 MHz (PLL: HSE 25 MHz / 25 · 200 / 4); AHB = APB1 = APB2 = 50 MHz |
+| I2C1 | SCL = PB6, SDA = PB7 (AF4), fast mode; só para configurar o AS5600 (`ENV_AS5600_USE_I2C`) |
+| AS5600 | Fonte em `ENV_AS5600_USE_ADC`: 0 = I2C (padrão, 1 kHz), 1 = ADC (5 kHz) |
+| AS5600 (analógico) | OUT em PA1 (ADC1_IN1), 56 ciclos de amostragem, 4 conversões por amostra, faixa `ADC_MIN`..`ADC_MAX` = 0..4095 |
+| USART1 (log) | TX = PA9, RX = PA10 (AF7), 921600 8N1 (BRR = 54, erro de 0,5%); CSV a cada `ENV_LOG_PERIOD_MS` = 1 ms |
+| Timer do AS5600 | TIM10, 1 ms com I2C ou 200 µs com ADC, prioridade 6 (`TIM1_UP_TIM10_IRQHandler`); velocidade numa janela de 1 ms |
 | DRV8313 | PWM no TIM3 a 20 kHz center-aligned: IN1 = PA6, IN2 = PA7, IN3 = PB0 (AF2); EN = PB12; nFAULT = PB13 |
 | Timer de comutação | TIM5 (32 bits), prioridade 2 (`TIM5_IRQHandler`) |
 | Motor e rampa | Pares de polos, alinhamento, `START_RPM`, `RAMP_END_RPM`, `TARGET_RPM`, `MAX_RPM`, rampa, V/f (`U_OFFSET`, `U_PER_RPM`, `U_MAX`), `AUTOSTART` |
@@ -381,18 +456,18 @@ Para trocar um timer, basta mudar o `env.h`: o nome do handler (`ENV_xxx_TIM_IRQ
 ## Como as peças se conectam (`main.c`)
 
 **Inicialização**, nesta ordem (qualquer falha para em `init_error()`, com log quando a UART já existe):
-1. `SystemCoreClockUpdate`, UART (log) e o mutex do log.
-2. I2C1, `task_as5600_create` e o timer do AS5600 (TIM10), já rodando.
+1. `clock_setup` (PLL de 50 MHz pelo `rcc_init`), UART e `task_logger_create` (DMA da UART e a fila de texto). Se o clock não ficar em 50 MHz, o `main` para em `init_error()`.
+2. I2C1, o ADC1 com o pino OUT do AS5600, `task_as5600_create` e o timer do AS5600 (TIM10), já rodando.
 3. `drv8313_init`, o timer de comutação (TIM5, parado) e `task_drv8313_create`.
 4. `task_as5600_set_sample_callback(task_drv8313_encoder_sample)`: cada leitura do encoder acorda a task do motor.
 5. Com `ENV_MOTOR_AUTOSTART`, `task_drv8313_start()` (o comando fica pendente até a task rodar) e então `vTaskStartScheduler()`.
 
-**Log:** `log_write` envia pela USART1. Com o scheduler rodando, usa um mutex para as mensagens das tasks não se misturarem. Cada origem usa um prefixo: `[main]`, `[as5600]` ou `[drv8313]`.
+**Log:** `log_write` chama `task_logger_write`. O logger é criado logo depois da UART, e todos os logs de texto saem com `# ` na frente, intercalados com o CSV de 1 ms. Cada origem usa um prefixo: `[main]`, `[as5600]`, `[drv8313]` ou `[logger]`. O callback `log_sample` do `main.c` define as colunas do CSV.
 
 **Fluxo de dados em funcionamento:**
 
 ```
-TIM10 (1 kHz, prio 6) --notify--> task_as5600 (prio 2) --I2C--> AS5600
+TIM10 (1 kHz, prio 6) --notify--> task_as5600 (prio 2) --I2C--> AS5600 (ou ADC a 5 kHz)
                                        |
                                        | callback de amostra (raw, velocidade, dt)
                                        v
@@ -410,16 +485,18 @@ TIM5 (10 kHz, prio 2) --> ISR de comutação: ângulo estimado -> setor -> sixst
 | ISR do TIM5 | 2 (acima do kernel) | Comutação: setor e duty cycles |
 | ISR do TIM10 | 6 | Notifica a `task_as5600` |
 | `task_drv8313` | 3 | Estados, rampa, PID e nFAULT |
-| `task_as5600` | 2 | Leitura do encoder |
+| `task_as5600` | 2 | Leitura do encoder (I2C: ~150 µs por amostra; ADC: ~11 µs) |
+| `task_logger` | 1 | CSV de 1 ms e logs de texto (DMA da USART1) |
 
 ## Pontos de atenção
 
 1. **Não dá para deixar uma fase flutuando no SimpleFOC Mini.** Na placa os três EN estão ligados juntos; o `sixstep` deixa a fase desligada em 50%. Para uma fase flutuando de verdade (necessária também para o BEMF sensorless), seria preciso separar os pinos EN1, EN2 e EN3 no hardware.
-2. **Carga da CPU a 16 MHz.** A ISR de comutação a 10 kHz e a leitura do I2C a 1 kHz, que espera o barramento por cerca de 130 µs a cada leitura, ocupam uma parte grande do processador. Ligar o PLL (até 100 MHz) com o `rcc_init` dá folga; nesse caso, ajuste os clocks no `env.h`.
-3. **Os pinos do DRV8313 e os parâmetros do motor são sugestões.** Confira as ligações do SimpleFOC Mini e ajuste os pares de polos, a tensão V/f e os ganhos do PID para o seu motor. Pares de polos errados fazem a calibração ser recusada (o motor fica em malha aberta).
-4. **O motor parte sozinho ao ligar** com `ENV_MOTOR_AUTOSTART` = 1. Para os primeiros testes, use uma fonte com limite de corrente.
-5. **Conflitos de pinos e timers.**
+2. **Clock de 50 MHz.** O sistema usa o PLL a partir do HSE (cristal de 25 MHz). Sem o cristal, o `rcc_init` não retorna. A ISR de comutação a 10 kHz continua sendo a maior parte da carga da CPU; a leitura analógica leva cerca de 11 µs por amostra. Para mudar o clock, ajuste `ENV_SYSCLK_HZ` e `ENV_PLL_M`/`N`/`P` no `env.h`. Acima de 50 MHz, o APB1 precisa de prescaler 2, e aí o clock dos timers do APB1 passa a ser o dobro do PCLK1.
+3. **Saída analógica do AS5600.** A leitura depende de o AS5600 e o STM32 terem a mesma referência de 3,3 V. Ruído na alimentação aparece direto no ângulo: use fios curtos e, se precisar, um capacitor pequeno (ex.: 10 nF) entre OUT e GND. Se a tensão de OUT não chegar a 0 V ou a 3,3 V, ajuste `ENV_AS5600_ADC_MIN`/`ADC_MAX` com os extremos de `task_as5600_get_adc()` girando o ímã devagar.
+4. **Os pinos do DRV8313 e os parâmetros do motor são sugestões.** Confira as ligações do SimpleFOC Mini e ajuste os pares de polos, a tensão V/f e os ganhos do PID para o seu motor. Pares de polos errados fazem a calibração ser recusada (o motor fica em malha aberta).
+5. **O motor parte sozinho ao ligar** com `ENV_MOTOR_AUTOSTART` = 1. Para os primeiros testes, use uma fonte com limite de corrente.
+6. **Conflitos de pinos e timers.**
    - A USART1 em PA9/PA10 ocupa os pinos do CH2/CH3 do TIM1. Se o `inverter` voltar a ser usado, mude o log para a USART6 (PA11/PA12, AF8).
    - O TIM10 divide o vetor de interrupção com o update do TIM1.
-   - O LCD, se voltar a ser usado, ocupa PA0 a PA5.
-6. **Velocidade máxima.** Com o encoder lido a cada 1 ms, o rotor precisa girar menos de meia volta entre leituras (até 30.000 rpm). Na prática, quem limita é a precisão da estimativa de ângulo entre amostras, que piora com a velocidade.
+   - O LCD, se voltar a ser usado, ocupa PA0 a PA5, o que inclui o PA1 do AS5600.
+7. **Velocidade máxima.** Com o encoder lido a cada 200 µs, o rotor precisa girar menos de meia volta entre leituras (até 150.000 rpm). Na prática, quem limita é a precisão da estimativa de ângulo entre amostras, que piora com a velocidade.
