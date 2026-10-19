@@ -172,14 +172,14 @@ Ainda faltam a modulação (SPWM/SVPWM) e as malhas de corrente. O ângulo elét
 
 Controlador PID de tempo discreto, em `float`. É a malha de velocidade da `task_drv8313`.
 
-- **struct `pid`**: ganhos `kp`, `ki`, `kd`; `saturation` (limite simétrico da saída e do integrador); estado interno `P`, `I`, `D` e `output`.
+- **struct `pid`**: ganhos `kp`, `ki`, `kd`; `saturation` (limite simétrico da saída e do integrador); `out_min`/`out_max` (limites assimétricos opcionais: com `out_max > out_min`, substituem o ±`saturation`; zerados, vale o simétrico); estado interno `P`, `I`, `D` e `output`.
 - **`pid_control(pid, setpoint, input, dt)`**:
   - derivada calculada sobre a medida, o que evita o *derivative kick* quando o setpoint muda;
   - na primeira amostra o termo D é zero;
-  - anti-windup por integração condicional: o integrador não avança quando a saída satura no mesmo sentido do erro, e ele também é limitado a ±`saturation`.
+  - anti-windup por integração condicional: o integrador não avança quando a saída satura no mesmo sentido do erro, e ele também é limitado à mesma faixa da saída.
 - **`pid_clear`**: zera o estado e mantém os ganhos e a saturação.
 
-O resultado fica em `pid.output`, na faixa [−saturation, +saturation]. Na `task_drv8313`, `saturation = u_max` e a saída é somada ao feedforward V/f: `u = V/f(setpoint) + output`.
+O resultado fica em `pid.output`, na faixa [−saturation, +saturation] ou [`out_min`, `out_max`]. Na `task_drv8313`, a faixa é [0, `u_max`] e a saída é a tensão inteira, como na simulação.
 
 ---
 
@@ -287,10 +287,12 @@ IDLE --start--> ALIGN --2 · align_ms--> RAMP --rpm = ramp_end_rpm--> RUN
 
 **Malha fechada:**
 - **PID logo após cada leitura:** o callback de amostra faz `xTaskNotify(EVT_SAMPLE)`, e a task do motor (prioridade 3, acima da do encoder) acorda logo depois de cada leitura para rodar o PID.
-- **Tensão aplicada:** `u = V/f(setpoint) + saída do PID`, limitada a `u_max`.
-- **Setpoint:** segue o alvo com a mesma rampa (`ramp_rpm_per_s`).
+- **Igual à simulação** (`simulation_bldc_velocidade`):
+  - o PID trabalha em **pu de velocidade**, com base = `target_rpm` da configuração (`ENV_MOTOR_TARGET_RPM`): setpoint e medida são divididos por ela;
+  - a saída do PID é a **tensão inteira**, limitada a [0, `u_max`] dentro do próprio PID, então o anti-windup enxerga o limite real. O V/f só é usado na rampa de partida.
+- **Setpoint:** parte da velocidade medida na troca e segue o alvo com a mesma rampa (`ramp_rpm_per_s`).
 - **Velocidade medida:** passa por um filtro passa-baixa de `speed_filter_ms`.
-- **Troca de malha:** na passagem da rampa para a malha fechada, o integrador começa com o valor que mantém a tensão atual, para não haver salto.
+- **Troca de malha:** o setpoint começa na velocidade medida (erro nulo) e o integrador começa com a tensão da rampa, então a tensão não salta.
 - **Falha do encoder:** sem amostra por `TASK_DRV8313_ENCODER_TIMEOUT_MS` (20 ms), a task vai para FAULT.
 
 | Função | Descrição |
@@ -446,8 +448,8 @@ Concentra tudo que depende da placa e do motor. Só o `src/` pode incluí-lo; as
 | Timer do AS5600 | TIM10, 1 ms com I2C ou 200 µs com ADC, prioridade 6 (`TIM1_UP_TIM10_IRQHandler`); velocidade numa janela de 1 ms |
 | DRV8313 | PWM no TIM3 a 20 kHz center-aligned: IN1 = PA6, IN2 = PA7, IN3 = PB0 (AF2); EN = PB12; nFAULT = PB13 |
 | Timer de comutação | TIM5 (32 bits), prioridade 2 (`TIM5_IRQHandler`) |
-| Motor e rampa | Pares de polos, alinhamento, `START_RPM`, `RAMP_END_RPM`, `TARGET_RPM`, `MAX_RPM`, rampa, V/f (`U_OFFSET`, `U_PER_RPM`, `U_MAX`), `AUTOSTART` |
-| Controle de velocidade | `CLOSED_LOOP`, `KP`, `KI`, `KD` (em u por rpm), `SPEED_FILTER_MS`, `COMM_RATE_HZ` (10 kHz) |
+| Motor e rampa | 7 pares de polos; alinhamento com u = 0,15, 2 × 500 ms; rampa de 60 a 500 rpm (`RAMP_END_RPM`) a 300 rpm/s; `TARGET_RPM` = 1150, `MAX_RPM` = 2500; V/f: `U_OFFSET` = 0,10, `U_PER_RPM` = 0,0002, `U_MAX` = 0,5; `AUTOSTART` = 1 |
+| Controle de velocidade | `CLOSED_LOOP` = 1; `KP` = 5, `KI` = 1 (os mesmos da simulação), `KD` = 2; ganhos em pu, com base `TARGET_RPM`; `SPEED_FILTER_MS` = 5; `COMM_RATE_HZ` = 10 kHz |
 
 Para trocar um timer, basta mudar o `env.h`: o nome do handler (`ENV_xxx_TIM_IRQHandler`) também vem dele.
 
@@ -492,11 +494,16 @@ TIM5 (10 kHz, prio 2) --> ISR de comutação: ângulo estimado -> setor -> sixst
 
 1. **Não dá para deixar uma fase flutuando no SimpleFOC Mini.** Na placa os três EN estão ligados juntos; o `sixstep` deixa a fase desligada em 50%. Para uma fase flutuando de verdade (necessária também para o BEMF sensorless), seria preciso separar os pinos EN1, EN2 e EN3 no hardware.
 2. **Clock de 50 MHz.** O sistema usa o PLL a partir do HSE (cristal de 25 MHz). Sem o cristal, o `rcc_init` não retorna. A ISR de comutação a 10 kHz continua sendo a maior parte da carga da CPU; a leitura analógica leva cerca de 11 µs por amostra. Para mudar o clock, ajuste `ENV_SYSCLK_HZ` e `ENV_PLL_M`/`N`/`P` no `env.h`. Acima de 50 MHz, o APB1 precisa de prescaler 2, e aí o clock dos timers do APB1 passa a ser o dobro do PCLK1.
-3. **Saída analógica do AS5600.** A leitura depende de o AS5600 e o STM32 terem a mesma referência de 3,3 V. Ruído na alimentação aparece direto no ângulo: use fios curtos e, se precisar, um capacitor pequeno (ex.: 10 nF) entre OUT e GND. Se a tensão de OUT não chegar a 0 V ou a 3,3 V, ajuste `ENV_AS5600_ADC_MIN`/`ADC_MAX` com os extremos de `task_as5600_get_adc()` girando o ímã devagar.
+3. **Saída analógica do AS5600 (fonte ADC).** Nos testes, a tensão de OUT ficou parada em ~3,2 V enquanto o ângulo pelo I2C girava normalmente, por isso a fonte padrão é o I2C. Antes de voltar ao ADC, meça o OUT com um multímetro girando o eixo à mão (deve ir de 0 a 3,3 V) e confira a ligação até o PA1. A leitura depende de o AS5600 e o STM32 terem a mesma referência de 3,3 V. Ruído na alimentação aparece direto no ângulo: use fios curtos e, se precisar, um capacitor pequeno (ex.: 10 nF) entre OUT e GND. Se a tensão de OUT não chegar a 0 V ou a 3,3 V, ajuste `ENV_AS5600_ADC_MIN`/`ADC_MAX` com os extremos de `task_as5600_get_adc()` girando o ímã devagar.
 4. **Os pinos do DRV8313 e os parâmetros do motor são sugestões.** Confira as ligações do SimpleFOC Mini e ajuste os pares de polos, a tensão V/f e os ganhos do PID para o seu motor. Pares de polos errados fazem a calibração ser recusada (o motor fica em malha aberta).
 5. **O motor parte sozinho ao ligar** com `ENV_MOTOR_AUTOSTART` = 1. Para os primeiros testes, use uma fonte com limite de corrente.
 6. **Conflitos de pinos e timers.**
    - A USART1 em PA9/PA10 ocupa os pinos do CH2/CH3 do TIM1. Se o `inverter` voltar a ser usado, mude o log para a USART6 (PA11/PA12, AF8).
    - O TIM10 divide o vetor de interrupção com o update do TIM1.
    - O LCD, se voltar a ser usado, ocupa PA0 a PA5, o que inclui o PA1 do AS5600.
-7. **Velocidade máxima.** Com o encoder lido a cada 200 µs, o rotor precisa girar menos de meia volta entre leituras (até 150.000 rpm). Na prática, quem limita é a precisão da estimativa de ângulo entre amostras, que piora com a velocidade.
+7. **Velocidade máxima.** Com o encoder lido a cada 1 ms (I2C), o rotor precisa girar menos de meia volta entre leituras (até 30.000 rpm; com o ADC a 200 µs, até 150.000 rpm). Na prática, quem limita é a precisão da estimativa de ângulo entre amostras, que piora com a velocidade.
+8. **Calibração do encoder no alinhamento.** O PID só entra se a calibração passar: a diferença entre as leituras nos setores 0 e 1 precisa ficar perto de 4096 / (6 · pares de polos), ou seja, ~97 contagens com 7 pares de polos. Num teste deu `delta = -294` e o motor ficou em malha aberta. A causa provável é o rotor começar perto do ponto oposto ao vetor do setor 0, onde o torque é quase zero. Aumentar `ENV_MOTOR_ALIGN_U`/`ALIGN_MS` ajuda; um pré-alinhamento num setor intermediário resolveria a causa.
+9. **Diferenças em relação à simulação.** A lógica da troca para o PID é a mesma de `simulation_bldc_velocidade`, mas:
+   - o limite superior da tensão é `U_MAX` = 0,5, e não 1;
+   - a velocidade medida passa pela janela de 1 ms e pelo filtro de 5 ms, o que acrescenta atraso (a simulação usa o `omega_r` exato);
+   - o `KD` = 2 não existe na simulação (lá o derivativo é 0).
