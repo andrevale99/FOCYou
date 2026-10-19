@@ -123,7 +123,7 @@
 #define ENV_MOTOR_ALIGN_MS        500U        /* cada um dos 2 passos do alinhamento */
 #define ENV_MOTOR_START_RPM       60.0f
 #define ENV_MOTOR_RAMP_END_RPM    500.0f      /* fim da rampa: entra na malha fechada */
-#define ENV_MOTOR_TARGET_RPM      2000.0f
+#define ENV_MOTOR_TARGET_RPM      1150.0f
 #define ENV_MOTOR_MAX_RPM         2500.0f     /* < 30000 / período do AS5600 em ms (meia volta por amostra) */
 #define ENV_MOTOR_RAMP_RPM_PER_S  300.0f
 #define ENV_MOTOR_U_OFFSET        0.10f
@@ -133,13 +133,15 @@
 
 /*
  * ---------- Controle de velocidade (PID + AS5600) ----------
- * Ganhos em unidades de tensão normalizada: com KP = 0,0005, um erro de
- * 100 rpm soma 0,05 à tensão. Comece só com KP e KI e aumente aos poucos.
+ * Como em simulation_bldc_velocidade: PID em pu de velocidade (base =
+ * ENV_MOTOR_TARGET_RPM) e saída = tensão normalizada, limitada a [0, U_MAX].
+ * Com KP = 5 e alvo de 1700 rpm, um erro de 17 rpm (0,01 pu) soma 0,05 à tensão.
+ * Para converter ganhos em u/rpm: ganho_pu = ganho_u_por_rpm · TARGET_RPM.
  */
 #define ENV_MOTOR_CLOSED_LOOP     1           /* 0: fica em malha aberta após a rampa */
-#define ENV_MOTOR_KP              10.0f
-#define ENV_MOTOR_KI              4.0f
-#define ENV_MOTOR_KD              0.0f
+#define ENV_MOTOR_KP              5.0f        /* u por pu (simulação: Kp = 5) */
+#define ENV_MOTOR_KI              1.0f        /* u por pu·s (simulação: Ki = 1) */
+#define ENV_MOTOR_KD              2.0f
 #define ENV_MOTOR_SPEED_FILTER_MS 5.0f        /* filtro passa-baixa sobre a velocidade da janela */
 #define ENV_MOTOR_COMM_RATE_HZ    10000U      /* ISR de comutação na malha fechada */
 
