@@ -22,10 +22,25 @@ pid_err_t pid_clear(pid *_pid)
 pid_err_t pid_control(pid *_pid, float setpoint,
                       float input, float dt)
 {
-    if (_pid == NULL || dt <= 0.0f || _pid->saturation < 0.0f)
+    if (_pid == NULL || dt <= 0.0f)
         return PID_ERR_INVALID_ARG;
 
-    const float sat = _pid->saturation;
+    /* Limites da saída e do integrador: assimétricos se configurados, senão ±saturation */
+    float lo;
+    float hi;
+    if (_pid->out_max > _pid->out_min)
+    {
+        lo = _pid->out_min;
+        hi = _pid->out_max;
+    }
+    else
+    {
+        if (_pid->saturation < 0.0f)
+            return PID_ERR_INVALID_ARG;
+        lo = -_pid->saturation;
+        hi = _pid->saturation;
+    }
+
     const float erro = setpoint - input;
 
     /* Primeira amostra: sem histórico, evita pico no termo derivativo */
@@ -59,15 +74,15 @@ pid_err_t pid_control(pid *_pid, float setpoint,
      * Saturação com anti-windup: se a saída saturar no sentido do erro,
      * o integrador não avança.
      */
-    if (out > sat)
+    if (out > hi)
     {
-        out = sat;
+        out = hi;
         if (erro > 0.0f)
             I_novo = _pid->I;
     }
-    else if (out < -sat)
+    else if (out < lo)
     {
-        out = -sat;
+        out = lo;
         if (erro < 0.0f)
             I_novo = _pid->I;
     }
@@ -75,10 +90,10 @@ pid_err_t pid_control(pid *_pid, float setpoint,
     /*
      * Limita o próprio integrador
      */
-    if (I_novo > sat)
-        I_novo = sat;
-    else if (I_novo < -sat)
-        I_novo = -sat;
+    if (I_novo > hi)
+        I_novo = hi;
+    else if (I_novo < lo)
+        I_novo = lo;
 
     _pid->I = I_novo;
     _pid->output = out;
