@@ -42,6 +42,7 @@ static volatile float rpm; /* malha aberta: velocidade comandada; malha fechada:
 
 /* Controle de velocidade */
 static pid speed_pid;
+static float speed_base_rpm; /* base do pu do PID: target_rpm da configuração */
 static volatile bool closed_active;
 static bool run_closed; /* resultado da calibração desta partida */
 
@@ -112,7 +113,7 @@ static float clampf(float x, float lo, float hi)
     return x;
 }
 
-/** Tensão V/f para uma velocidade (rampa e feedforward do PID). */
+/** Tensão V/f para uma velocidade (rampa de partida). */
 static float vf_u(float r)
 {
     return clampf(motor.u_offset + motor.u_per_rpm * r, 0.0f, motor.u_max);
@@ -363,11 +364,16 @@ static void enter_closed_loop(void)
     speed_pid.kp = motor.kp;
     speed_pid.ki = motor.ki;
     speed_pid.kd = motor.kd;
-    speed_pid.saturation = motor.u_max;
+    speed_pid.out_min = 0.0f; /* a saída é a tensão inteira: anti-windup no limite real */
+    speed_pid.out_max = motor.u_max;
     (void)pid_clear(&speed_pid);
 
-    /* Transferência sem degrau: o integrador começa com o que falta para a tensão atual */
-    speed_pid.I = clampf(comm_u - vf_u(rpm), -motor.u_max, motor.u_max);
+    /*
+     * Transferência sem degrau, como na simulação: o setpoint parte da
+     * velocidade medida (erro nulo) e o integrador começa com a tensão atual.
+     */
+    rpm = clampf(speed_meas, 0.0f, target_rpm);
+    speed_pid.I = clampf(comm_u, 0.0f, motor.u_max);
 
     comm_dt_s = 1.0f / (float)motor.comm_rate_hz;
     comm_lead = (comm_dir == SIXSTEP_DIR_FORWARD) ? PI_OVER_2 : -PI_OVER_2;
@@ -389,7 +395,8 @@ static void enter_closed_loop(void)
     closed_active = true;
     want_samples = true;
 
-    log_msg("malha fechada: %ld rpm, u = %ld/1000", to_long(rpm), to_long(comm_u * 1000.0f));
+    log_msg("malha fechada: setpoint inicial %ld rpm (medido), u = %ld/1000", to_long(rpm),
+            to_long(comm_u * 1000.0f));
     set_state(TASK_DRV8313_STATE_RUN);
 }
 
@@ -412,10 +419,10 @@ static void control_step(void)
     rpm = r;
 
     const float meas = speed_meas;
-    (void)pid_control(&speed_pid, r, meas, dt);
 
-    /* Feedforward V/f + correção do PID */
-    comm_u = clampf(vf_u(r) + speed_pid.output, 0.0f, motor.u_max);
+    /* PID em pu, como na simulação; a saída já sai limitada a [0, u_max] */
+    (void)pid_control(&speed_pid, r / speed_base_rpm, meas / speed_base_rpm, dt);
+    comm_u = clampf(speed_pid.output, 0.0f, motor.u_max);
 
 #if TASK_DRV8313_STATUS_MS > 0
     status_elapsed_s += dt;
@@ -622,6 +629,7 @@ BaseType_t task_drv8313_create(drv8313_t *d, gptim_t *t,
     log_fn = log;
 
     target_rpm = m->target_rpm;
+    speed_base_rpm = m->target_rpm; /* > 0: target_rpm >= start_rpm > 0 */
     rpm = 0.0f;
     comm_mode = COMM_OFF;
     comm_dir = m->direction;

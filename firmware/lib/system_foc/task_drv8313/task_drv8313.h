@@ -24,9 +24,15 @@
  *          leituras dão o zero elétrico e o sentido de contagem (calibração).
  * - RAMP:  partida em malha aberta de @c start_rpm até @c ramp_end_rpm, com
  *          tensão u = u_offset + u_per_rpm · rpm (V/f).
- * - RUN:   com @c closed_loop e calibração válida, malha fechada: o PID ajusta a
- *          tensão para seguir o alvo (com a mesma rampa no setpoint). Sem encoder,
- *          continua em malha aberta seguindo o alvo, como na rampa.
+ * - RUN:   com @c closed_loop e calibração válida, malha fechada (como em
+ *          simulation_bldc_velocidade da simulação):
+ *          - o setpoint parte da velocidade medida (erro nulo na troca) e sobe
+ *            em rampa até o alvo;
+ *          - o PID trabalha em pu (base = @c target_rpm da configuração) e a
+ *            saída é a tensão inteira, limitada a [0, u_max] no próprio PID
+ *            (anti-windup no limite real); o V/f não é mais usado;
+ *          - o integrador começa com a tensão da rampa (troca sem degrau).
+ *          Sem encoder, continua em malha aberta seguindo o alvo, como na rampa.
  *
  * Uso:
  * @code
@@ -109,7 +115,7 @@ typedef struct
     float ramp_end_rpm;   /**< Fim da rampa: passagem para a malha fechada (>= start_rpm). */
     float ramp_rpm_per_s; /**< Aceleração da rampa e do setpoint, em rpm/s (> 0). */
     float u_offset;       /**< V/f: tensão com rpm = 0 (vence a resistência do enrolamento). */
-    float u_per_rpm;      /**< V/f: ganho de tensão por rpm; também é o feedforward do PID. */
+    float u_per_rpm;      /**< V/f: ganho de tensão por rpm. */
     float u_max;          /**< Limite da tensão normalizada (0.0 a 1.0). */
 
     /* Velocidade */
@@ -118,9 +124,9 @@ typedef struct
 
     /* Malha fechada */
     bool closed_loop;      /**< true: usa o encoder e o PID depois da rampa. */
-    float kp;              /**< Ganho proporcional, em u por rpm. */
-    float ki;              /**< Ganho integral, em u por (rpm · s). */
-    float kd;              /**< Ganho derivativo, em u por (rpm / s). */
+    float kp;              /**< Ganho proporcional, em u por pu de velocidade (base = target_rpm). */
+    float ki;              /**< Ganho integral, em u por (pu · s). */
+    float kd;              /**< Ganho derivativo, em u por (pu / s). */
     float speed_filter_ms; /**< Constante de tempo do filtro passa-baixa da velocidade medida (0 = sem filtro). */
     uint32_t comm_rate_hz; /**< Taxa da ISR de comutação na malha fechada (ex.: 10000). */
 } task_drv8313_motor_cfg_t;
@@ -183,9 +189,9 @@ float task_drv8313_set_target_rpm(float rpm);
 
 /**
  * @brief Muda os ganhos do PID (vale na próxima amostra; útil para sintonia).
- * @param[in] kp Ganho proporcional, em u por rpm.
- * @param[in] ki Ganho integral, em u por (rpm · s).
- * @param[in] kd Ganho derivativo, em u por (rpm / s).
+ * @param[in] kp Ganho proporcional, em u por pu de velocidade (base = target_rpm da configuração).
+ * @param[in] ki Ganho integral, em u por (pu · s).
+ * @param[in] kd Ganho derivativo, em u por (pu / s).
  */
 void task_drv8313_set_pid_gains(float kp, float ki, float kd);
 
