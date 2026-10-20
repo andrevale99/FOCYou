@@ -51,21 +51,26 @@
  * 0: RAW ANGLE pelo I2C1 (~150 µs por leitura, amostragem de 1 kHz).
  * 1: saída analógica OUT pelo ADC1 (~11 µs por leitura, amostragem de 5 kHz).
  */
-#define ENV_AS5600_USE_ADC         0
+#define ENV_AS5600_USE_ADC         1
 
 /*
  * ---------- AS5600: saída analógica (OUT) no ADC1 (só com ENV_AS5600_USE_ADC = 1) ----------
- * OUT em PA1 (ADC1_IN1). Com o AS5600 e o STM32 em 3,3 V a leitura é
- * ratiométrica: 0..4095 do ADC = 0..360°. Ajuste ADC_MIN/ADC_MAX se a saída
- * não chegar aos extremos (veja task_as5600_get_adc() girando o ímã devagar).
+ * OUT em PA1 (ADC1_IN1). Ligação (datasheet AS5600): AS5600 e STM32 no mesmo
+ * 3,3 V (leitura ratiométrica), PGO desligado (com PGO no GND o OUT fica preso em
+ * VDD), carga no OUT de no máximo 1 nF.
+ * Faixa reduzida (10% a 90% de VDD): exige o I2C para gravar o CONF e detecta OUT
+ * em 0 V (sem ímã) ou em VDD (PGO no GND / OUT solto). Faixa cheia: 0 a 100%.
+ * ADC_MIN/ADC_MAX em 0 e 0: faixa ideal (0..4095 ou 410..3686); senão, ajuste fino
+ * com os extremos de task_as5600_get_adc() girando o ímã devagar.
  */
 #define ENV_AS5600_ADC_PORT        GPIOA
 #define ENV_AS5600_ADC_PIN         1U
-#define ENV_AS5600_ADC_SAMPLE      ADC_SAMPLE_56 /* ADCCLK = 25 MHz: (56 + 12) / 25 MHz = 2,7 µs por conversão */
+#define ENV_AS5600_ADC_SAMPLE      ADC_SAMPLE_84 /* ADCCLK = 25 MHz: (84 + 12) / 25 MHz = 3,8 µs por conversão */
 #define ENV_AS5600_ADC_OVERSAMPLE  4U            /* conversões por amostra (média) */
-#define ENV_AS5600_ADC_MIN         0U
-#define ENV_AS5600_ADC_MAX         4095U
-#define ENV_AS5600_USE_I2C         1             /* fonte ADC: 1 configura o sensor e confere o ímã pelo I2C */
+#define ENV_AS5600_ANALOG_RANGE    TASK_AS5600_ANALOG_REDUCED /* ou TASK_AS5600_ANALOG_FULL */
+#define ENV_AS5600_ADC_MIN         0U            /* 0 e 0: faixa ideal automática */
+#define ENV_AS5600_ADC_MAX         0U
+#define ENV_AS5600_USE_I2C         1             /* fonte ADC: 1 configura o sensor, faz o autoteste e o diagnóstico */
 
 /*
  * ---------- Timer da leitura do AS5600 (general purpose) ----------
@@ -123,7 +128,7 @@
 #define ENV_MOTOR_ALIGN_MS        500U        /* cada um dos 2 passos do alinhamento */
 #define ENV_MOTOR_START_RPM       60.0f
 #define ENV_MOTOR_RAMP_END_RPM    500.0f      /* fim da rampa: entra na malha fechada */
-#define ENV_MOTOR_TARGET_RPM      1150.0f
+#define ENV_MOTOR_TARGET_RPM      900.0f
 #define ENV_MOTOR_MAX_RPM         2500.0f     /* < 30000 / período do AS5600 em ms (meia volta por amostra) */
 #define ENV_MOTOR_RAMP_RPM_PER_S  300.0f
 #define ENV_MOTOR_U_OFFSET        0.10f
@@ -139,10 +144,11 @@
  * Para converter ganhos em u/rpm: ganho_pu = ganho_u_por_rpm · TARGET_RPM.
  */
 #define ENV_MOTOR_CLOSED_LOOP     1           /* 0: fica em malha aberta após a rampa */
-#define ENV_MOTOR_KP              5.0f        /* u por pu (simulação: Kp = 5) */
-#define ENV_MOTOR_KI              1.0f        /* u por pu·s (simulação: Ki = 1) */
-#define ENV_MOTOR_KD              2.0f
+#define ENV_MOTOR_KP              1.0f        /* u por pu (simulação: Kp = 5) */
+#define ENV_MOTOR_KI              0.2f        /* u por pu·s (simulação: Ki = 1) */
+#define ENV_MOTOR_KD              0.01f
 #define ENV_MOTOR_SPEED_FILTER_MS 5.0f        /* filtro passa-baixa sobre a velocidade da janela */
 #define ENV_MOTOR_COMM_RATE_HZ    10000U      /* ISR de comutação na malha fechada */
+#define ENV_MOTOR_SWITCH_LAG_DEG  30.0f       /* atraso do rotor ao vetor da rampa na troca, graus elétricos */
 
 #endif

@@ -161,6 +161,7 @@ static BaseType_t as5600_task_setup(void)
         .adc = &adc,
         .adc_channel = as5600_adc_channel,
         .oversample = ENV_AS5600_ADC_OVERSAMPLE,
+        .analog_range = ENV_AS5600_ANALOG_RANGE,
         .adc_min = ENV_AS5600_ADC_MIN,
         .adc_max = ENV_AS5600_ADC_MAX,
         .max_rpm = ENV_MOTOR_MAX_RPM,
@@ -259,6 +260,7 @@ static BaseType_t motor_task_setup(void)
         .kd = ENV_MOTOR_KD,
         .speed_filter_ms = ENV_MOTOR_SPEED_FILTER_MS,
         .comm_rate_hz = ENV_MOTOR_COMM_RATE_HZ,
+        .switch_lag_deg = ENV_MOTOR_SWITCH_LAG_DEG,
     };
 
     return task_drv8313_create(&drv, &comm_tim, &motor, log_write);

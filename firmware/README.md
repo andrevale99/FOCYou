@@ -236,17 +236,29 @@ A fonte do ângulo é escolhida em `task_as5600_config_t::source` (`ENV_AS5600_U
 | Fonte | Leitura | Amostragem | Observação |
 |---|---|---|---|
 | **I2C** (padrão) | RAW ANGLE por `as5600_read_raw_angle` | 1 kHz | Cada leitura ocupa a CPU por ~150 µs (polling a 400 kHz). Sem o sensor em 0x36 nem 0x40, a task fica presa avisando a cada 1 s. Com `BUSY` ou `TIMEOUT`, chama `i2c_bus_recover` |
-| **ADC** | Pino OUT pelo ADC1 | 5 kHz | Descrita abaixo. Nos testes, a tensão de OUT ficou parada (~3,2 V) enquanto o I2C mostrava o ângulo girando: confira a ligação do OUT até o PA1 antes de voltar a ela |
+| **ADC** | Pino OUT pelo ADC1 | 5 kHz | Descrita abaixo. Nos testes, a tensão de OUT ficou parada (~3,2 V) enquanto o I2C mostrava o ângulo girando; pelo datasheet, a causa mais provável é o PGO ligado ao GND (ver "Pontos de atenção") |
 
 O resto do processamento é o mesmo nas duas fontes: rejeição de leituras impossíveis, `as5600_track_raw`, velocidade na janela e o callback de amostra.
 
-**Fonte ADC:** lê o pino **OUT** do AS5600 (saída analógica de 0% a 100% de VDD) pelo ADC a cada interrupção de um timer (`gptim`). Com o AS5600 e o STM32 na mesma alimentação de 3,3 V a leitura é ratiométrica: 0 a 4095 do ADC = 0 a 360°.
+**Fonte ADC:** lê o pino **OUT** do AS5600 pelo ADC a cada interrupção de um timer (`gptim`). O que o datasheet (`pdfs/AS5600.PDF`) diz sobre essa saída e como a task usa:
+
+| Datasheet | Página | Na task |
+|---|---|---|
+| OUT é a saída de um DAC de 12 bits, ratiométrica entre GND e VDD do AS5600 | 24 | AS5600 e STM32 no mesmo 3,3 V: a conversão não depende do valor exato da alimentação |
+| OUT segue o **ANGLE** (com escala de ZPOS/MPOS/MANG), não o RAW ANGLE | 19, 25, 26 | Com I2C, zera ZPOS/MPOS/MANG na RAM para a faixa de 360° |
+| `CONF.OUTS = 01`: faixa **reduzida, de 10% a 90% de VDD** | 19, 26 | `analog_range = TASK_AS5600_ANALOG_REDUCED` (padrão no `env.h`): uma leitura abaixo de ~5% vira "OUT em 0 V" e acima de ~95% vira "OUT em VDD", em vez de um ângulo falso. Precisa do I2C para gravar o CONF; sem ele, usa a faixa cheia de fábrica |
+| Sem ímã, OUT vai para 0 V (MD = 0) | 30 | Detectado na faixa reduzida |
+| Com **PGO no GND**, o sensor entra na programação pela OUT e **puxa o OUT para VDD** por um resistor interno | 3, 23 | Detectado na faixa reduzida e no autoteste |
+| Depois de gravar um registrador, a saída muda pelo menos 1 ms depois | 22, 24 | Espera 2 ms depois do CONF |
+| Histerese de 10 LSB em 0°/360°; INL do DAC de ±5 LSB | 6, 25 | A folga de ruído na rejeição (16) cobre os dois; o autoteste pula ângulos perto de 0° |
+| Carga no OUT: ≥ 100 kΩ (faixa cheia) ou ≥ 10 kΩ (reduzida), e **no máximo 1 nF** | 6 | — |
 
 1. Espera o power-up do sensor (10 ms).
-2. **I2C opcional:** se houver, procura o encoder em **0x36** e depois em **0x40**, grava o CONF (saída analógica de faixa cheia, sempre ligado, filtro `SF_2X`, `FTH_6LSB`) e confere o ímã. Sem resposta (ou sem I2C), segue com a configuração de fábrica, que já é a saída analógica de faixa cheia.
+2. **I2C opcional:** se houver, procura o encoder em **0x36** e depois em **0x40** e grava o CONF (estágio de saída da faixa escolhida, sempre ligado, filtro `SF_2X`, `FTH_6LSB`). O CONF é **conferido por leitura de volta** e só então a faixa reduzida é usada. Depois confere o ímã e faz um **autoteste**: compara o ADC com o valor esperado para o ANGLE lido pelo I2C (tolerância de 64 contagens, `TASK_AS5600_SELFTEST_TOL`) e, se falhar, loga a causa provável (OUT em VDD, OUT em 0 V ou pino/alimentação/carga). Sem resposta (ou sem I2C), segue com a configuração de fábrica, que é a faixa cheia.
 3. A cada notificação do timer:
    - faz `oversample` conversões e tira a média pelo menor caminho, para não errar perto de 0°/360° (a média simples de 4095 e 0 daria 2048);
-   - converte para ângulo usando a faixa `adc_min..adc_max`;
+   - na faixa reduzida, descarta a amostra se alguma conversão estiver perto dos trilhos (OUT em 0 V ou em VDD) e loga a causa a cada 1 s;
+   - converte para ângulo usando a faixa ideal (0..4095 ou 410..3686) ou o ajuste `adc_min..adc_max`;
    - descarta leituras impossíveis;
    - chama `as5600_track_raw` (voltas), calcula a velocidade na janela e chama o **callback de amostra** com `(raw, velocidade em rad/s, dt)`.
 
@@ -443,7 +455,7 @@ Concentra tudo que depende da placa e do motor. Só o `src/` pode incluí-lo; as
 | Clocks | SYSCLK = 50 MHz (PLL: HSE 25 MHz / 25 · 200 / 4); AHB = APB1 = APB2 = 50 MHz |
 | I2C1 | SCL = PB6, SDA = PB7 (AF4), fast mode; só para configurar o AS5600 (`ENV_AS5600_USE_I2C`) |
 | AS5600 | Fonte em `ENV_AS5600_USE_ADC`: 0 = I2C (padrão, 1 kHz), 1 = ADC (5 kHz) |
-| AS5600 (analógico) | OUT em PA1 (ADC1_IN1), 56 ciclos de amostragem, 4 conversões por amostra, faixa `ADC_MIN`..`ADC_MAX` = 0..4095 |
+| AS5600 (analógico) | OUT em PA1 (ADC1_IN1), 84 ciclos de amostragem (3,8 µs por conversão), 4 conversões por amostra, faixa reduzida de 10% a 90% (`ENV_AS5600_ANALOG_RANGE`), `ADC_MIN`/`ADC_MAX` = 0 e 0 (faixa ideal automática) |
 | USART1 (log) | TX = PA9, RX = PA10 (AF7), 921600 8N1 (BRR = 54, erro de 0,5%); CSV a cada `ENV_LOG_PERIOD_MS` = 1 ms |
 | Timer do AS5600 | TIM10, 1 ms com I2C ou 200 µs com ADC, prioridade 6 (`TIM1_UP_TIM10_IRQHandler`); velocidade numa janela de 1 ms |
 | DRV8313 | PWM no TIM3 a 20 kHz center-aligned: IN1 = PA6, IN2 = PA7, IN3 = PB0 (AF2); EN = PB12; nFAULT = PB13 |
@@ -494,7 +506,13 @@ TIM5 (10 kHz, prio 2) --> ISR de comutação: ângulo estimado -> setor -> sixst
 
 1. **Não dá para deixar uma fase flutuando no SimpleFOC Mini.** Na placa os três EN estão ligados juntos; o `sixstep` deixa a fase desligada em 50%. Para uma fase flutuando de verdade (necessária também para o BEMF sensorless), seria preciso separar os pinos EN1, EN2 e EN3 no hardware.
 2. **Clock de 50 MHz.** O sistema usa o PLL a partir do HSE (cristal de 25 MHz). Sem o cristal, o `rcc_init` não retorna. A ISR de comutação a 10 kHz continua sendo a maior parte da carga da CPU; a leitura analógica leva cerca de 11 µs por amostra. Para mudar o clock, ajuste `ENV_SYSCLK_HZ` e `ENV_PLL_M`/`N`/`P` no `env.h`. Acima de 50 MHz, o APB1 precisa de prescaler 2, e aí o clock dos timers do APB1 passa a ser o dobro do PCLK1.
-3. **Saída analógica do AS5600 (fonte ADC).** Nos testes, a tensão de OUT ficou parada em ~3,2 V enquanto o ângulo pelo I2C girava normalmente, por isso a fonte padrão é o I2C. Antes de voltar ao ADC, meça o OUT com um multímetro girando o eixo à mão (deve ir de 0 a 3,3 V) e confira a ligação até o PA1. A leitura depende de o AS5600 e o STM32 terem a mesma referência de 3,3 V. Ruído na alimentação aparece direto no ângulo: use fios curtos e, se precisar, um capacitor pequeno (ex.: 10 nF) entre OUT e GND. Se a tensão de OUT não chegar a 0 V ou a 3,3 V, ajuste `ENV_AS5600_ADC_MIN`/`ADC_MAX` com os extremos de `task_as5600_get_adc()` girando o ímã devagar.
+3. **Saída analógica do AS5600 (fonte ADC).** Nos testes, a tensão de OUT ficou parada em ~3,2 V enquanto o ângulo pelo I2C girava normalmente, por isso a fonte padrão é o I2C. Pelo datasheet, a causa mais provável é o **pino PGO ligado ao GND**: nesse caso o AS5600 entra na programação pela OUT (Option B) e mantém o OUT puxado para VDD por um resistor interno (págs. 3 e 23). Antes de voltar ao ADC:
+   - deixe o **PGO desligado** (ele tem pull-up interno);
+   - confira a ligação do OUT até o PA1 e meça o OUT com um multímetro girando o eixo à mão (de ~0,33 V a ~2,97 V na faixa reduzida);
+   - use o mesmo 3,3 V no AS5600 e no STM32;
+   - no OUT, carga de **no máximo 1 nF** e pelo menos 10 kΩ (faixa reduzida) ou 100 kΩ (faixa cheia). Um capacitor de filtro maior que 1 nF está fora da especificação.
+
+   Com o I2C ligado, o autoteste da partida e o log `diag` a cada 1 s mostram se o ADC bate com o ANGLE.
 4. **Os pinos do DRV8313 e os parâmetros do motor são sugestões.** Confira as ligações do SimpleFOC Mini e ajuste os pares de polos, a tensão V/f e os ganhos do PID para o seu motor. Pares de polos errados fazem a calibração ser recusada (o motor fica em malha aberta).
 5. **O motor parte sozinho ao ligar** com `ENV_MOTOR_AUTOSTART` = 1. Para os primeiros testes, use uma fonte com limite de corrente.
 6. **Conflitos de pinos e timers.**
