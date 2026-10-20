@@ -6,6 +6,15 @@
 #define COUNTS ((int32_t)AS5600_COUNTS_PER_REV)
 #define HALF_COUNTS (COUNTS / 2)
 
+/* Faixa reduzida do OUT (CONF.OUTS = 01): 10% a 90% de VDD, em contagens do ADC */
+#define ADC_FULL ((int32_t)ADC_MAX_VALUE)
+#define REDUCED_LO ((ADC_FULL * 10 + 50) / 100) /* 410 */
+#define REDUCED_HI ((ADC_FULL * 90 + 50) / 100) /* 3686 */
+
+/* Classificação de uma conversão na faixa reduzida (códigos positivos; os do ADC são negativos) */
+#define ANALOG_OUT_LOW 1  /* OUT perto de 0 V */
+#define ANALOG_OUT_HIGH 2 /* OUT perto de VDD */
+
 TaskHandle_t task_as5600_handle = NULL;
 
 static task_as5600_config_t cfg;
@@ -20,6 +29,13 @@ static volatile float velocity_rad_s;
 static volatile bool ready;
 static bool i2c_ok; /* sensor respondeu no I2C: habilita o diagnóstico */
 
+/* Faixa analógica em uso (definida na configuração pelo I2C) */
+static bool analog_reduced;
+static int32_t a_lo;     /* ADC em 0° */
+static int32_t a_hi;     /* ADC em 360° */
+static int32_t a_err_lo; /* faixa reduzida: abaixo disso, OUT em 0 V */
+static int32_t a_err_hi; /* faixa reduzida: acima disso, OUT em VDD */
+
 /*
  * Janela da velocidade: posições (voltas · 4096 + ângulo) e tempos entre amostras aceitas.
  * As posições são uint32_t: o estouro dá a volta e a diferença continua certa.
@@ -31,8 +47,8 @@ static uint8_t vel_head;
 static uint8_t vel_count;
 static uint8_t vel_window; /* amostras na janela (0 = amostra a amostra) */
 
-/* Configuração do encoder: sempre ligado, saída analógica de faixa cheia e resposta rápida */
-static const as5600_conf_t enc_conf = {
+/* Configuração do encoder: sempre ligado e resposta rápida; o estágio de saída é definido na partida */
+static as5600_conf_t enc_conf = {
     .power_mode = AS5600_PM_NOM,
     .hysteresis = AS5600_HYST_OFF,
     .output_stage = AS5600_OUTS_ANALOG_FULL,
@@ -95,31 +111,91 @@ static int32_t wrap_delta(int32_t d)
     return d;
 }
 
-/** Converte a leitura do ADC em ângulo (0 a 4095) usando a faixa adc_min..adc_max. */
-static int32_t adc_to_angle(uint16_t v)
+/**
+ * Define a faixa do ADC: os valores ideais do estágio de saída (0..4095 ou
+ * 10%..90%) ou o ajuste fino de adc_min/adc_max. Na faixa reduzida, os limites de
+ * erro ficam no meio da margem até os trilhos (~5% e ~95%).
+ */
+static void setup_analog_range(bool reduced)
 {
-    if (v <= cfg.adc_min)
+    analog_reduced = reduced;
+
+    if (cfg.adc_min == 0U && cfg.adc_max == 0U)
+    {
+        a_lo = reduced ? REDUCED_LO : 0;
+        a_hi = reduced ? REDUCED_HI : ADC_FULL;
+    }
+    else
+    {
+        a_lo = cfg.adc_min;
+        a_hi = cfg.adc_max;
+    }
+
+    a_err_lo = a_lo / 2;
+    a_err_hi = a_hi + (ADC_FULL - a_hi) / 2;
+}
+
+/** Converte a leitura do ADC em ângulo (0 a 4095); fora de a_lo..a_hi, satura (INL/offset do DAC). */
+static int32_t adc_to_angle(int32_t v)
+{
+    if (v <= a_lo)
         return 0;
-    if (v >= cfg.adc_max)
+    if (v >= a_hi)
         return COUNTS - 1;
 
-    const int32_t span = (int32_t)cfg.adc_max - (int32_t)cfg.adc_min;
-    return (((int32_t)v - (int32_t)cfg.adc_min) * (COUNTS - 1) + span / 2) / span;
+    const int32_t span = a_hi - a_lo;
+    return ((v - a_lo) * (COUNTS - 1) + span / 2) / span;
+}
+
+/** Leitura de ADC esperada para um ângulo (autoteste e diagnóstico). */
+static int32_t angle_to_adc(uint16_t angle)
+{
+    return a_lo + ((int32_t)angle * (a_hi - a_lo) + (COUNTS - 1) / 2) / (COUNTS - 1);
+}
+
+/** Na faixa reduzida, uma conversão perto dos trilhos não é ângulo: é falha. */
+static int classify(uint16_t v)
+{
+    if (!analog_reduced)
+        return 0;
+    if ((int32_t)v < a_err_lo)
+        return ANALOG_OUT_LOW;
+    if ((int32_t)v > a_err_hi)
+        return ANALOG_OUT_HIGH;
+    return 0;
+}
+
+static const char *analog_err_str(int err)
+{
+    switch (err)
+    {
+    case ANALOG_OUT_LOW:
+        return "OUT em 0 V (sem ima ou OUT em curto)";
+    case ANALOG_OUT_HIGH:
+        return "OUT em VDD (PGO no GND ou OUT solto)";
+    default:
+        return "erro no ADC";
+    }
 }
 
 /**
  * Faz @c oversample conversões e tira a média dos ângulos. A média é feita em
  * relação à primeira conversão, pelo menor caminho, para não errar perto de 0°/360°
- * (a média simples de 4095 e 0 daria 2048).
+ * (a média simples de 4095 e 0 daria 2048). Retorna 0, um código do ADC
+ * (negativo) ou ANALOG_OUT_LOW/HIGH se alguma conversão saiu da faixa reduzida.
  */
-static driver_err_t read_angle(uint16_t *angle)
+static int read_angle(uint16_t *angle)
 {
     uint16_t v;
     driver_err_t err = adc_read(cfg.adc, cfg.adc_channel, &v);
     if (err != DRIVER_OK)
-        return err;
+        return (int)err;
 
     adc_last = v;
+    int cls = classify(v);
+    if (cls != 0)
+        return cls;
+
     const int32_t first = adc_to_angle(v);
     int32_t sum = 0;
 
@@ -127,7 +203,11 @@ static driver_err_t read_angle(uint16_t *angle)
     {
         err = adc_read(cfg.adc, cfg.adc_channel, &v);
         if (err != DRIVER_OK)
-            return err;
+            return (int)err;
+
+        cls = classify(v);
+        if (cls != 0)
+            return cls;
 
         sum += wrap_delta(adc_to_angle(v) - first);
     }
@@ -139,7 +219,7 @@ static driver_err_t read_angle(uint16_t *angle)
         a -= COUNTS;
 
     *angle = (uint16_t)a;
-    return DRIVER_OK;
+    return 0;
 }
 
 /**
@@ -182,7 +262,7 @@ static float window_velocity(float dt)
 static int read_sample(uint16_t *angle)
 {
     if (cfg.source == TASK_AS5600_SOURCE_ADC)
-        return (int)read_angle(angle);
+        return read_angle(angle);
 
     if (as5600_read_raw_angle(&enc, angle) == AS5600_OK)
         return 0;
@@ -200,7 +280,7 @@ static void encoder_configure_i2c(void)
 
     if (cfg.i2c == NULL)
     {
-        log_msg("sem I2C: usa a configuracao de fabrica (saida analogica de faixa cheia)");
+        log_msg("sem I2C: usa a configuracao de fabrica (OUT de 0 a 100%%)");
         return;
     }
 
@@ -241,10 +321,25 @@ static void encoder_configure_i2c(void)
 
     i2c_ok = true;
 
-    if (as5600_set_conf(&enc, &enc_conf) == AS5600_OK)
-        log_msg("CONF gravado (saida analogica 0-100%%, SF 2x, FTH 6 LSB)");
+    /* Estágio de saída: faixa reduzida só faz sentido (e só é pedida) na fonte ADC */
+    const bool want_reduced = (cfg.source == TASK_AS5600_SOURCE_ADC) &&
+                              (cfg.analog_range == TASK_AS5600_ANALOG_REDUCED);
+    enc_conf.output_stage = want_reduced ? AS5600_OUTS_ANALOG_REDUCED : AS5600_OUTS_ANALOG_FULL;
+
+    /* Grava e confere lendo de volta: a saída só muda pelo menos 1 ms depois (datasheet) */
+    as5600_conf_t readback;
+    if (as5600_set_conf(&enc, &enc_conf) == AS5600_OK && as5600_get_conf(&enc, &readback) == AS5600_OK &&
+        readback.output_stage == enc_conf.output_stage && readback.power_mode == enc_conf.power_mode &&
+        readback.slow_filter == enc_conf.slow_filter && readback.fast_filter == enc_conf.fast_filter)
+    {
+        log_msg("CONF conferido: OUT %s, SF 2x, FTH 6 LSB", want_reduced ? "10-90%" : "0-100%");
+        if (cfg.source == TASK_AS5600_SOURCE_ADC)
+            setup_analog_range(want_reduced);
+    }
     else
-        log_msg("falha ao escrever CONF (I2C %d)", as5600_get_i2c_error(&enc));
+    {
+        log_msg("falha ao gravar/conferir o CONF (I2C %d)", as5600_get_i2c_error(&enc));
+    }
 
     /*
      * A saída OUT segue o ANGLE, que é limitado pela faixa ZPOS..MPOS (ou MANG).
@@ -269,6 +364,8 @@ static void encoder_configure_i2c(void)
             log_msg("falha ao zerar ZPOS/MPOS/MANG (I2C %d)", as5600_get_i2c_error(&enc));
     }
 
+    vTaskDelay(pdMS_TO_TICKS(2)); /* CONF e faixa valem na saída >= 1 ms depois */
+
     err = as5600_check_magnet(&enc);
     if (err == AS5600_OK)
     {
@@ -284,6 +381,75 @@ static void encoder_configure_i2c(void)
     }
 }
 
+/**
+ * Autoteste da saída analógica: compara o ADC com o ANGLE lido pelo I2C (o OUT
+ * segue o ANGLE). Loga o erro e, se passar da tolerância, a causa provável.
+ */
+static void analog_selftest(void)
+{
+    int32_t worst = 0;
+    uint16_t w_angle = 0;
+    uint16_t w_adc = 0;
+    uint8_t valid = 0;
+
+    for (uint8_t i = 0; i < 5U; i++)
+    {
+        vTaskDelay(pdMS_TO_TICKS(1));
+
+        uint16_t angle;
+        uint16_t v;
+        if (as5600_read_angle(&enc, &angle) != AS5600_OK || adc_read(cfg.adc, cfg.adc_channel, &v) != DRIVER_OK)
+            continue;
+
+        /* Perto de 0°/360° a histerese de 10 LSB deixa o OUT ambíguo: pula */
+        if (angle < 16U || angle > (uint16_t)(COUNTS - 16))
+            continue;
+
+        const int32_t e = (int32_t)v - angle_to_adc(angle);
+        if (valid == 0U || (e < 0 ? -e : e) > (worst < 0 ? -worst : worst))
+        {
+            worst = e;
+            w_angle = angle;
+            w_adc = v;
+        }
+        valid++;
+    }
+
+    if (valid == 0U)
+    {
+        log_msg("autoteste: sem leituras validas (I2C, ADC ou angulo perto de 0)");
+        return;
+    }
+
+    log_msg("autoteste: ANGLE %u -> ADC esperado %ld, lido %u", w_angle, (long)angle_to_adc(w_angle),
+            w_adc);
+
+    const int32_t mag = (worst < 0) ? -worst : worst;
+    if (mag <= (int32_t)TASK_AS5600_SELFTEST_TOL)
+    {
+        log_msg("autoteste OK: erro %ld (tolerancia %u)", (long)worst, (unsigned)TASK_AS5600_SELFTEST_TOL);
+        return;
+    }
+
+    log_msg("autoteste FALHOU: erro %ld (tolerancia %u)", (long)worst, (unsigned)TASK_AS5600_SELFTEST_TOL);
+
+    if ((int32_t)w_adc > (ADC_FULL * 95) / 100)
+    {
+        log_msg("causa provavel: OUT em VDD. Com PGO no GND o AS5600 entra");
+        log_msg("na programacao pela OUT (pull-up interno): deixe PGO solto.");
+        log_msg("Ou o OUT nao esta ligado ao pino do ADC.");
+    }
+    else if ((int32_t)w_adc < (ADC_FULL * 5) / 100)
+    {
+        log_msg("causa provavel: OUT em 0 V (sem ima, MD = 0, ou OUT em curto)");
+    }
+    else
+    {
+        log_msg("causa provavel: pino/canal do ADC errado, AS5600 e STM32 com");
+        log_msg("3,3 V diferentes, ou carga no OUT acima de 1 nF / abaixo de 10k");
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* Task                                                                */
 /* ------------------------------------------------------------------ */
@@ -293,8 +459,8 @@ static void vAs5600Task(void *pvParameters)
     (void)pvParameters;
 
     if (cfg.source == TASK_AS5600_SOURCE_ADC)
-        log_msg("task iniciada: ADC canal %u, faixa %u..%u, %u conversao(oes) por amostra",
-                cfg.adc_channel, cfg.adc_min, cfg.adc_max, cfg.oversample);
+        log_msg("task iniciada: OUT no ADC canal %u, %u conversao(oes) por amostra", cfg.adc_channel,
+                cfg.oversample);
     else
         log_msg("task iniciada: leitura do RAW ANGLE pelo I2C");
     log_msg("amostragem: %lu us, janela da velocidade: %u amostra(s)", (unsigned long)cfg.period_us,
@@ -302,9 +468,24 @@ static void vAs5600Task(void *pvParameters)
 
     vTaskDelay(pdMS_TO_TICKS(TASK_AS5600_POWERUP_MS));
 
-    /* 1. Configuração pelo I2C (opcional) */
+    /* 1. Configuração pelo I2C (opcional); sem ela, o OUT fica na faixa cheia de fábrica */
+    if (cfg.source == TASK_AS5600_SOURCE_ADC)
+        setup_analog_range(false);
+
     encoder_configure_i2c();
     (void)as5600_reset_tracking(&enc);
+
+    if (cfg.source == TASK_AS5600_SOURCE_ADC)
+    {
+        if (cfg.analog_range == TASK_AS5600_ANALOG_REDUCED && !analog_reduced)
+            log_msg("faixa reduzida exige o I2C: usando OUT de 0 a 100%%");
+
+        log_msg("faixa do ADC: %ld..%ld (%s)", (long)a_lo, (long)a_hi,
+                analog_reduced ? "10-90%, fora dela = falha" : "0-100%");
+
+        if (i2c_ok)
+            analog_selftest();
+    }
 
     /* 2. Leitura a cada notificação do timer */
     const float period_s = (float)cfg.period_us * 1e-6f;
@@ -350,15 +531,17 @@ static void vAs5600Task(void *pvParameters)
         if (cfg.source == TASK_AS5600_SOURCE_ADC && i2c_ok && ++diag_counter * cfg.period_us >= TASK_AS5600_DIAG_MS * 1000U)
         {
             diag_counter = 0;
-            uint16_t i2c_raw = 0, i2c_angle = 0;
-            const as5600_err_t e1 = as5600_read_raw_angle(&enc, &i2c_raw);
-            const as5600_err_t e2 = as5600_read_angle(&enc, &i2c_angle);
-
-            if (e1 == AS5600_OK && e2 == AS5600_OK)
-                log_msg("diag: I2C raw %u, angle %u | ADC %u -> angulo %u", i2c_raw, i2c_angle, adc_last,
-                        raw_angle);
+            uint16_t i2c_angle = 0;
+            if (as5600_read_angle(&enc, &i2c_angle) == AS5600_OK)
+            {
+                const int32_t expected = angle_to_adc(i2c_angle);
+                log_msg("diag: ANGLE %u, ADC %u (esperado %ld, erro %ld)", i2c_angle, adc_last,
+                        (long)expected, (long)adc_last - (long)expected);
+            }
             else
+            {
                 log_msg("diag: falha no I2C (%d)", as5600_get_i2c_error(&enc));
+            }
         }
 #endif
 
@@ -381,7 +564,13 @@ static void vAs5600Task(void *pvParameters)
         {
             /* Loga o primeiro erro e depois um resumo a cada ~1 s */
             if (consecutive_errors % samples_per_log == 0U)
-                log_msg("erro no %s %d, %lu seguido(s)", src, err, (unsigned long)(consecutive_errors + 1U));
+            {
+                if (err > 0)
+                    log_msg("%s: adc %u, %lu seguido(s)", analog_err_str(err), adc_last,
+                            (unsigned long)(consecutive_errors + 1U));
+                else
+                    log_msg("erro no %s %d, %lu seguido(s)", src, err, (unsigned long)(consecutive_errors + 1U));
+            }
             consecutive_errors++;
             continue;
         }
@@ -452,8 +641,11 @@ BaseType_t task_as5600_create(const task_as5600_config_t *c, task_as5600_log_t l
     }
     else if (c->source == TASK_AS5600_SOURCE_ADC)
     {
+        const bool auto_range = (c->adc_min == 0U && c->adc_max == 0U);
+
         if (c->adc == NULL || c->adc_channel > 18U ||
-            c->adc_max <= c->adc_min || c->adc_max > ADC_MAX_VALUE ||
+            (c->analog_range != TASK_AS5600_ANALOG_FULL && c->analog_range != TASK_AS5600_ANALOG_REDUCED) ||
+            (!auto_range && (c->adc_max <= c->adc_min || c->adc_max > ADC_MAX_VALUE)) ||
             c->oversample == 0U || c->oversample > 16U)
             return pdFAIL;
     }
