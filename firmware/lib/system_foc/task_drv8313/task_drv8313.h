@@ -20,19 +20,21 @@
  *       +---------------------------- stop ---------------------------------+
  *     (nFAULT ativo, erro do driver ou encoder parado -> FAULT; clear_fault -> IDLE)
  *
- * - ALIGN: alinha o rotor no setor 0 e depois no setor 1. Com o encoder, as duas
- *          leituras dão o zero elétrico e o sentido de contagem (calibração).
+ * - ALIGN: alinha o rotor no setor 0 e depois no setor 1 (sem calibração).
  * - RAMP:  partida em malha aberta de @c start_rpm até @c ramp_end_rpm, com
  *          tensão u = u_offset + u_per_rpm · rpm (V/f).
- * - RUN:   com @c closed_loop e calibração válida, malha fechada (como em
- *          simulation_bldc_velocidade da simulação):
+ * - RUN:   com @c closed_loop, troca para a malha fechada sempre no fim da rampa
+ *          (como em simulation_bldc_velocidade da simulação):
+ *          - a referência do ângulo elétrico é tirada na troca: sentido pelo sinal
+ *            da velocidade medida e zero pelo setor atual (setor · 60°) menos
+ *            @c switch_lag_deg;
  *          - o setpoint parte da velocidade medida (erro nulo na troca) e sobe
  *            em rampa até o alvo;
  *          - o PID trabalha em pu (base = @c target_rpm da configuração) e a
  *            saída é a tensão inteira, limitada a [0, u_max] no próprio PID
  *            (anti-windup no limite real); o V/f não é mais usado;
  *          - o integrador começa com a tensão da rampa (troca sem degrau).
- *          Sem encoder, continua em malha aberta seguindo o alvo, como na rampa.
+ *          Sem amostras do encoder, continua em malha aberta seguindo o alvo.
  *
  * Uso:
  * @code
@@ -94,7 +96,7 @@
 typedef enum
 {
     TASK_DRV8313_STATE_IDLE = 0, /**< Saídas desligadas, esperando task_drv8313_start(). */
-    TASK_DRV8313_STATE_ALIGN,    /**< Alinhando o rotor (e calibrando o encoder). */
+    TASK_DRV8313_STATE_ALIGN,    /**< Alinhando o rotor. */
     TASK_DRV8313_STATE_RAMP,     /**< Partida em malha aberta. */
     TASK_DRV8313_STATE_RUN,      /**< Em operação (malha fechada ou aberta). */
     TASK_DRV8313_STATE_FAULT,    /**< Falha; saídas desligadas. */
@@ -128,6 +130,7 @@ typedef struct
     float ki;              /**< Ganho integral, em u por (pu · s). */
     float kd;              /**< Ganho derivativo, em u por (pu / s). */
     float speed_filter_ms; /**< Constante de tempo do filtro passa-baixa da velocidade medida (0 = sem filtro). */
+    float switch_lag_deg;  /**< Atraso do rotor ao vetor da rampa na troca, em graus elétricos (0 a 90). */
     uint32_t comm_rate_hz; /**< Taxa da ISR de comutação na malha fechada (ex.: 10000). */
 } task_drv8313_motor_cfg_t;
 

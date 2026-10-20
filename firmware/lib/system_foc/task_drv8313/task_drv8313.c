@@ -44,7 +44,7 @@ static volatile float rpm; /* malha aberta: velocidade comandada; malha fechada:
 static pid speed_pid;
 static float speed_base_rpm; /* base do pu do PID: target_rpm da configuração */
 static volatile bool closed_active;
-static bool run_closed; /* resultado da calibração desta partida */
+static bool run_closed; /* closed_loop: troca para o PID no fim da rampa */
 
 /* Amostras do encoder (escritas no contexto da task do AS5600) */
 static volatile uint16_t enc_raw;
@@ -56,8 +56,9 @@ static volatile float speed_meas;  /* rpm filtrado, positivo no sentido comandad
 static volatile bool speed_init;
 
 /* Calibração do encoder (feita no alinhamento) */
-static volatile int8_t enc_sign; /* +1/-1: sentido do RAW ANGLE na sequência direta; 0 = sem calibração */
-static volatile uint16_t enc_raw_ref; /* RAW ANGLE com o rotor alinhado ao setor 1 */
+static volatile int8_t enc_sign; /* +1/-1: sentido do RAW ANGLE na sequência direta; 0 = sem referência */
+static volatile uint16_t enc_raw_ref; /* RAW ANGLE no instante da troca para a malha fechada */
+static volatile float enc_theta_ref;  /* ângulo elétrico atribuído a enc_raw_ref, rad */
 
 /* Compartilhado com a ISR de comutação (escritas de 32 bits são atômicas no M4) */
 static volatile comm_mode_t comm_mode;
@@ -150,7 +151,8 @@ static bool set_step_period(float r)
 
 /**
  * Ângulo elétrico do rotor a partir do RAW ANGLE, no sentido da sequência direta
- * de setores. Referência: rotor alinhado ao setor 1 = 60°.
+ * de setores (o vetor do setor s fica em s · 60°). Referência: enc_raw_ref vale
+ * enc_theta_ref (definidos na troca para a malha fechada).
  * A conta em inteiros evita perder resolução com várias voltas.
  */
 static float elec_angle(uint16_t raw)
@@ -160,7 +162,7 @@ static float elec_angle(uint16_t raw)
     if (e < 0)
         e += ENC_COUNTS;
 
-    return (float)e * (TWO_PI / (float)ENC_COUNTS) + PI_OVER_3;
+    return (float)e * (TWO_PI / (float)ENC_COUNTS) + enc_theta_ref;
 }
 
 /** Para a comutação e desliga as saídas (o motor para por inércia). */
@@ -193,13 +195,11 @@ static void enter_idle(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Alinhamento e calibração                                            */
+/* Alinhamento                                                          */
 /* ------------------------------------------------------------------ */
 
 static uint8_t align_phase;
 static uint32_t align_elapsed_ms;
-static uint16_t align_raw0;
-static bool align_enc0;
 
 static void enter_align(void)
 {
@@ -210,9 +210,9 @@ static void enter_align(void)
     comm_sector = 0;
     comm_u = motor.align_u;
 
-    enc_sign = 0; /* nova calibração a cada partida */
+    enc_sign = 0; /* sem referência do ângulo até a troca para a malha fechada */
     speed_init = false;
-    run_closed = false;
+    run_closed = motor.closed_loop;
 
     align_phase = 0;
     align_elapsed_ms = 0;
@@ -232,46 +232,6 @@ static void enter_align(void)
     set_state(TASK_DRV8313_STATE_ALIGN);
 }
 
-/**
- * Compara as leituras do encoder nos setores 0 e 1 (60° elétricos):
- * o sinal dá o sentido de contagem e o módulo confere os pares de polos.
- */
-static void calibrate_encoder(void)
-{
-    if (!motor.closed_loop)
-        return;
-
-    if (!align_enc0 || !enc_valid)
-    {
-        log_msg("sem amostras do encoder: segue em malha aberta");
-        return;
-    }
-
-    const uint16_t raw1 = enc_raw;
-    int32_t delta = (int32_t)raw1 - (int32_t)align_raw0;
-    if (delta > ENC_COUNTS / 2)
-        delta -= ENC_COUNTS;
-    else if (delta < -ENC_COUNTS / 2)
-        delta += ENC_COUNTS;
-
-    const int32_t expected = ENC_COUNTS / (6 * (int32_t)motor.pole_pairs);
-    const int32_t mag = (delta < 0) ? -delta : delta;
-
-    if (mag < expected / 2 || mag > (expected * 3) / 2)
-    {
-        log_msg("calibracao suspeita: delta = %ld, esperado %ld; segue em malha aberta",
-                (long)delta, (long)expected);
-        return;
-    }
-
-    enc_raw_ref = raw1;
-    enc_sign = (delta > 0) ? 1 : -1; /* depois do enc_raw_ref: libera o cálculo do ângulo */
-    run_closed = true;
-
-    log_msg("calibracao: delta = %ld (esperado %ld), sentido %d", (long)delta, (long)expected,
-            enc_sign);
-}
-
 /** Avança o alinhamento; retorna true quando termina. */
 static bool align_step(void)
 {
@@ -283,9 +243,7 @@ static bool align_step(void)
 
     if (align_phase == 0U)
     {
-        /* Rotor parado no setor 0: primeira leitura; depois avança 60° */
-        align_enc0 = enc_valid;
-        align_raw0 = enc_raw;
+        /* Rotor parado no setor 0: avança 60° */
         align_phase = 1;
 
         const drv8313_err_t err = apply_sector(1, motor.align_u);
@@ -294,7 +252,6 @@ static bool align_step(void)
         return false;
     }
 
-    calibrate_encoder();
     return true;
 }
 
@@ -378,11 +335,38 @@ static void enter_closed_loop(void)
     comm_dt_s = 1.0f / (float)motor.comm_rate_hz;
     comm_lead = (comm_dir == SIXSTEP_DIR_FORWARD) ? PI_OVER_2 : -PI_OVER_2;
 
+    /*
+     * Referência do ângulo elétrico, sem calibração:
+     * - sentido: sinal da velocidade medida na rampa (speed_meas usa sentido +1
+     *   e vem no sentido comandado; positiva = RAW ANGLE anda com a sequência direta);
+     * - zero: o rotor gira sincronizado com o vetor da rampa, atrasado pelo ângulo
+     *   de carga; o ângulo atual recebe setor · 60° menos switch_lag_deg.
+     */
+    const float meas = speed_meas;
+    const int8_t sign = (meas >= 0.0f) ? 1 : -1;
+    const float lag = motor.switch_lag_deg * (TWO_PI / 360.0f) * dir_sign();
+
+    if (meas * meas < 0.25f * rpm * rpm)
+        log_msg("aviso: encoder mede %ld rpm, rampa em %ld rpm", to_long(meas), to_long(rpm));
+
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();
+    const uint8_t sector = comm_sector;
+    const uint16_t raw = enc_raw;
+    const float vel = enc_vel_rad_s;
+
+    enc_raw_ref = raw;
+    enc_theta_ref = (float)sector * PI_OVER_3 - lag;
+    enc_sign = sign; /* por último: libera o cálculo do ângulo nas amostras */
+
+    isr_theta_e = enc_theta_ref;
+    isr_omega_e = (float)sign * vel * (float)motor.pole_pairs;
     isr_ticks = 0;
     comm_mode = COMM_CLOSED;
     __set_PRIMASK(primask);
+
+    log_msg("troca: setor %u, raw %u, atraso %ld graus el., sentido %+d", sector, raw,
+            to_long(motor.switch_lag_deg), sign);
 
     /* Vale a partir do próximo update (fim do setor atual da rampa) */
     if (gptim_set_period_us(tim, 1000000U / motor.comm_rate_hz) != DRIVER_OK)
@@ -567,11 +551,16 @@ static void vDrv8313Task(void *pvParameters)
         case TASK_DRV8313_STATE_RAMP:
             if (ramp_step(ramp_goal()) && state == TASK_DRV8313_STATE_RAMP)
             {
-                if (run_closed)
+                if (run_closed && enc_valid)
                 {
                     enter_closed_loop();
                 }
-                else
+                else if (run_closed)
+                {
+                    log_msg("sem amostras do encoder: segue em malha aberta");
+                }
+
+                if (state == TASK_DRV8313_STATE_RAMP)
                 {
                     log_msg("alvo atingido em malha aberta: %ld rpm, u = %ld/1000", to_long(rpm),
                             to_long(comm_u * 1000.0f));
@@ -613,7 +602,8 @@ static bool motor_cfg_valid(const task_drv8313_motor_cfg_t *m)
 
     return m->kp >= 0.0f && m->ki >= 0.0f && m->kd >= 0.0f &&
            m->speed_filter_ms >= 0.0f &&
-           m->comm_rate_hz > 0U && m->comm_rate_hz <= 100000U;
+           m->comm_rate_hz > 0U && m->comm_rate_hz <= 100000U &&
+           m->switch_lag_deg >= 0.0f && m->switch_lag_deg <= 90.0f;
 }
 
 BaseType_t task_drv8313_create(drv8313_t *d, gptim_t *t,
@@ -758,7 +748,7 @@ void task_drv8313_encoder_sample(uint16_t raw, float velocity_rad_s, float dt_s)
 
     const int8_t sign = enc_sign;
 
-    /* Velocidade no sentido comandado (antes da calibração, no sentido do RAW ANGLE) */
+    /* Velocidade no sentido comandado (antes da troca, com sentido de contagem +1) */
     const float rpm_inst = dir_sign() * (float)((sign != 0) ? sign : 1) * velocity_rad_s * RAD_S_TO_RPM;
 
     if (!speed_init)
