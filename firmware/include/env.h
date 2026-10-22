@@ -128,8 +128,8 @@
 #define ENV_MOTOR_ALIGN_MS        500U        /* cada um dos 2 passos do alinhamento */
 #define ENV_MOTOR_START_RPM       60.0f
 #define ENV_MOTOR_RAMP_END_RPM    500.0f      /* fim da rampa: entra na malha fechada */
-#define ENV_MOTOR_TARGET_RPM      900.0f
-#define ENV_MOTOR_MAX_RPM         2500.0f     /* < 30000 / período do AS5600 em ms (meia volta por amostra) */
+#define ENV_MOTOR_TARGET_RPM      3000.0f
+#define ENV_MOTOR_MAX_RPM         3400.0f     /* < 30000 / período do AS5600 em ms (meia volta por amostra) */
 #define ENV_MOTOR_RAMP_RPM_PER_S  300.0f
 #define ENV_MOTOR_U_OFFSET        0.10f
 #define ENV_MOTOR_U_PER_RPM       0.0002f
@@ -144,9 +144,9 @@
  * Para converter ganhos em u/rpm: ganho_pu = ganho_u_por_rpm · TARGET_RPM.
  */
 #define ENV_MOTOR_CLOSED_LOOP     1           /* 0: fica em malha aberta após a rampa */
-#define ENV_MOTOR_KP              1.0f        /* u por pu (simulação: Kp = 5) */
-#define ENV_MOTOR_KI              0.2f        /* u por pu·s (simulação: Ki = 1) */
-#define ENV_MOTOR_KD              0.01f
+#define ENV_MOTOR_KP              10.0f        /* u por pu (simulação: Kp = 5) */
+#define ENV_MOTOR_KI              4.0f        /* u por pu·s (simulação: Ki = 1) */
+#define ENV_MOTOR_KD              0.0f
 #define ENV_MOTOR_SPEED_FILTER_MS 5.0f        /* filtro passa-baixa sobre a velocidade da janela */
 #define ENV_MOTOR_COMM_RATE_HZ    10000U      /* ISR de comutação na malha fechada */
 #define ENV_MOTOR_SWITCH_LAG_DEG  30.0f       /* atraso do rotor ao vetor da rampa na troca, graus elétricos */
